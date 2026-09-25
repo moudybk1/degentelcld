@@ -1,0 +1,9 @@
+# Local agent tooling (installed skills; see skills-lock.json)
+.claude/
+.agents/
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

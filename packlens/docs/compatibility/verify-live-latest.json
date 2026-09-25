@@ -1,0 +1,227 @@
+{
+  "ranAt": "2026-09-25T10:56:46.532Z",
+  "rpc": "wss://api.mainnet-beta.solana.com",
+  "results": [
+    {
+      "step": "solana-rpc-logsSubscribe",
+      "ok": true,
+      "detail": "462 notifications in 15 s, 115 failed transactions ignored, decoded 132 buys and 130 sells, 0 decode errors; chain-to-arrival latency p50 1271 ms, p90 1651 ms; 0.0% would be late at 2 s tolerance"
+    },
+    {
+      "step": "tgm/token-ohlcv",
+      "ok": true,
+      "detail": "available; 6 closed candles; latest 2026-09-25T10:50:00.000Z close $118.92189228195636 (age at fetch 397 s)"
+    },
+    {
+      "step": "smart-money/dex-trades",
+      "ok": true,
+      "detail": "available; 100 trades; newest 2026-09-25T10:56:18.000Z"
+    },
+    {
+      "step": "tgm/token-information",
+      "ok": true,
+      "detail": "available; CATE market cap 102080674.21845824"
+    },
+    {
+      "step": "tgm/holders",
+      "ok": true,
+      "detail": "available; 20 holders; last page false"
+    },
+    {
+      "step": "smart-money/netflow",
+      "ok": true,
+      "detail": "available; 1h 7304.850119730856, 24h -21783.007906839382"
+    },
+    {
+      "step": "smart-money/dex-trades",
+      "ok": true,
+      "detail": "available; 11 buys of this token; unique buyers 7"
+    },
+    {
+      "step": "profiler/address/pnl-summary",
+      "ok": true,
+      "detail": "available; realized -4053.925510790643, win rate 0.5714285714285714, sales 35"
+    },
+    {
+      "step": "profiler/dex-trades",
+      "ok": true,
+      "detail": "available; 8 trades; last page true"
+    },
+    {
+      "step": "profiler/address/related-wallets",
+      "ok": true,
+      "detail": "available; 19 related wallets"
+    },
+    {
+      "step": "profiler/address/current-balance",
+      "ok": true,
+      "detail": "available; 1 balances; token observed true"
+    }
+  ],
+  "shapes": {
+    "tgm/token-ohlcv": {
+      "request": {
+        "chain": "solana",
+        "token_address": "So11111111111111111111111111111111111111112",
+        "timeframe": "5m",
+        "date": {
+          "from": "2026-09-25T10:25:00Z",
+          "to": "2026-09-25T10:55:00Z"
+        }
+      },
+      "availability": "available",
+      "page": null,
+      "isLastPage": null,
+      "providerRequestId": "4c78e62c8bfbec5ae1c12743c094352e"
+    },
+    "smart-money/dex-trades": {
+      "request": {
+        "chains": [
+          "solana"
+        ],
+        "filters": {
+          "token_bought_address": "Ai66LHZG9MCzg1WKdawwqduVAXpNDUuV8M3uyq5ppump"
+        },
+        "pagination": {
+          "page": 1,
+          "per_page": 100
+        },
+        "order_by": [
+          {
+            "field": "block_timestamp",
+            "direction": "DESC"
+          }
+        ]
+      },
+      "availability": "available",
+      "page": 1,
+      "isLastPage": true,
+      "providerRequestId": "d06b4f327a3a8106c8167e3b78db9930"
+    },
+    "tgm/token-information": {
+      "request": {
+        "chain": "solana",
+        "token_address": "Ai66LHZG9MCzg1WKdawwqduVAXpNDUuV8M3uyq5ppump",
+        "timeframe": "1h"
+      },
+      "availability": "available",
+      "page": null,
+      "isLastPage": null,
+      "providerRequestId": "211368306ed0be5008d9ac0a01bc540a"
+    },
+    "tgm/holders": {
+      "request": {
+        "chain": "solana",
+        "token_address": "Ai66LHZG9MCzg1WKdawwqduVAXpNDUuV8M3uyq5ppump",
+        "premium_labels": false,
+        "aggregate_by_entity": false,
+        "label_type": "all_holders",
+        "pagination": {
+          "page": 1,
+          "per_page": 20
+        },
+        "order_by": [
+          {
+            "field": "token_amount",
+            "direction": "DESC"
+          }
+        ]
+      },
+      "availability": "available",
+      "page": 1,
+      "isLastPage": false,
+      "providerRequestId": "4f5392222445942056ffdb66beeff709"
+    },
+    "smart-money/netflow": {
+      "request": {
+        "chains": [
+          "solana"
+        ],
+        "filters": {
+          "token_address": "Ai66LHZG9MCzg1WKdawwqduVAXpNDUuV8M3uyq5ppump"
+        },
+        "pagination": {
+          "page": 1,
+          "per_page": 100
+        }
+      },
+      "availability": "available",
+      "page": 1,
+      "isLastPage": true,
+      "providerRequestId": "bbfda61c0afe61229633533a6212633e"
+    },
+    "profiler/address/pnl-summary": {
+      "request": {
+        "chain": "solana",
+        "wallet_address": "3faU48ZVCcNQFr9tefuHWWKbaLDDn4GxCCxgQgYvgVbA",
+        "date": {
+          "from": "2026-08-26T10:00:00Z",
+          "to": "2026-09-25T10:00:00Z"
+        }
+      },
+      "availability": "available",
+      "page": null,
+      "isLastPage": null,
+      "providerRequestId": "daafc87235f9835df6140919dc19a61a"
+    },
+    "profiler/dex-trades": {
+      "request": {
+        "chain": "solana",
+        "address": "3faU48ZVCcNQFr9tefuHWWKbaLDDn4GxCCxgQgYvgVbA",
+        "date": {
+          "from": "2026-09-18T10:55:00Z",
+          "to": "2026-09-25T10:55:00Z"
+        },
+        "pagination": {
+          "page": 1,
+          "per_page": 100
+        }
+      },
+      "availability": "available",
+      "page": 1,
+      "isLastPage": true,
+      "providerRequestId": "1c05150ce5d08c1592f6491f28719f6f"
+    },
+    "profiler/address/related-wallets": {
+      "request": {
+        "chain": "solana",
+        "wallet_address": "3faU48ZVCcNQFr9tefuHWWKbaLDDn4GxCCxgQgYvgVbA",
+        "pagination": {
+          "page": 1,
+          "per_page": 100
+        }
+      },
+      "availability": "available",
+      "page": 1,
+      "isLastPage": true,
+      "providerRequestId": "4785be4162ae5c0ed549f843f777641a"
+    },
+    "profiler/address/current-balance": {
+      "request": {
+        "chain": "solana",
+        "address": "3faU48ZVCcNQFr9tefuHWWKbaLDDn4GxCCxgQgYvgVbA",
+        "hide_spam_token": false,
+        "filters": {
+          "token_address": "Ai66LHZG9MCzg1WKdawwqduVAXpNDUuV8M3uyq5ppump"
+        },
+        "pagination": {
+          "page": 1,
+          "per_page": 100
+        }
+      },
+      "availability": "available",
+      "page": 1,
+      "isLastPage": true,
+      "providerRequestId": "10a20a2b0022a1471b1f9e2ed1e0585b"
+    }
+  },
+  "ledger": {
+    "budget": 1000,
+    "settled": 51,
+    "reserved": 0,
+    "unresolved": 3,
+    "remaining": 946,
+    "priceReserve": 2
+  },
+  "lastReportedRemaining": 17648
+}

@@ -1,0 +1,14 @@
+{
+  "datasetId": "synthetic-demo-v1",
+  "label": "Synthetic demo: five tokens, four packs, one price outage",
+  "mode": "fixture",
+  "origin": "synthetic",
+  "chain": "solana",
+  "source": "pumpfun",
+  "decoderVersion": "pumpfun-idl-81091419-v1",
+  "configVersion": "pack-baseline-v1",
+  "createdAt": "2026-09-24T00:00:00Z",
+  "file": "fixtures/synthetic/synthetic-demo-v1.json",
+  "sha256": "60be05813fe7f802090a8206e48a502f40781aa38ef9e8c27b0b234f8bc7d958",
+  "eventCount": 176
+}

@@ -1,0 +1,44 @@
+{
+  "name": "packlens",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Investigation radar for grouped token purchases on Solana pump.fun, with Nansen wallet, token, and Smart Money context.",
+  "type": "module",
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "workspaces": [
+    "packages/contracts",
+    "apps/server",
+    "apps/web"
+  ],
+  "scripts": {
+    "dev": "concurrently -k -n server,web -c gray,blue \"npm run dev -w @packlens/server\" \"npm run dev -w @packlens/web\"",
+    "build": "npm run build -w @packlens/server && npm run build -w @packlens/web",
+    "typecheck": "tsc -p packages/contracts --noEmit && tsc -p apps/server --noEmit && tsc -p apps/web --noEmit && tsc -p tests --noEmit",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "test:e2e": "npm run build && playwright test",
+    "db:migrate": "tsx apps/server/src/scripts/migrate.ts",
+    "db:schema-doc": "tsx apps/server/src/scripts/schema-doc.ts",
+    "start": "node apps/server/dist/index.js",
+    "replay": "tsx apps/server/src/scripts/replay.ts",
+    "dataset:export": "tsx apps/server/src/scripts/export-dataset.ts",
+    "verify:live": "tsx apps/server/src/scripts/verify-live.ts",
+    "usage:manifest": "tsx apps/server/src/scripts/usage-manifest.ts",
+    "session:set": "tsx apps/server/src/scripts/session-set.ts",
+    "fixtures:generate": "tsx apps/server/src/scripts/generate-fixtures.ts"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@playwright/test": "1.63.0",
+    "@types/node": "24.13.6",
+    "concurrently": "10.0.5",
+    "eslint": "10.11.0",
+    "globals": "17.12.0",
+    "tsx": "4.23.15",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.70.1",
+    "vitest": "5.0.2"
+  }
+}

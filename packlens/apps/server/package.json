@@ -1,0 +1,25 @@
+{
+  "name": "@packlens/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx watch --clear-screen=false src/index.ts",
+    "build": "tsc -p tsconfig.build.json"
+  },
+  "dependencies": {
+    "@fastify/cookie": "11.1.2",
+    "@fastify/static": "10.1.4",
+    "@packlens/contracts": "0.1.0",
+    "better-sqlite3": "13.0.3",
+    "decimal.js": "10.6.0",
+    "fastify": "5.12.5",
+    "ws": "8.21.3",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "9.6.0",
+    "@types/ws": "8.18.1"
+  }
+}

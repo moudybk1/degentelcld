@@ -1,0 +1,220 @@
+{
+  "generatedAt": "2026-09-25T11:12:18.228Z",
+  "campaignId": "packlens-live",
+  "configuredBudget": 1000,
+  "window": {
+    "first": "2026-09-25T10:47:25.750Z",
+    "last": "2026-09-25T11:11:57.398Z"
+  },
+  "totals": {
+    "attempts": 272,
+    "http_success": 260,
+    "schema_valid": 260,
+    "unresolved_attempts": 12,
+    "actual_credits": 492,
+    "min_reported_remaining": 17206,
+    "cache_hits_not_calls": 6
+  },
+  "credits": {
+    "settled": 492,
+    "unresolved": 16,
+    "reserved": 0
+  },
+  "minimumTarget": 100,
+  "minimumMet": true,
+  "byEndpoint": [
+    {
+      "endpoint": "profiler/address/current-balance",
+      "attempts": 32,
+      "http_success": 32,
+      "schema_valid": 32,
+      "failed": 0,
+      "unresolved": 0,
+      "actual_credits": 32,
+      "quoted_credits": 32
+    },
+    {
+      "endpoint": "profiler/address/pnl-summary",
+      "attempts": 47,
+      "http_success": 47,
+      "schema_valid": 47,
+      "failed": 0,
+      "unresolved": 0,
+      "actual_credits": 47,
+      "quoted_credits": 47
+    },
+    {
+      "endpoint": "profiler/address/related-wallets",
+      "attempts": 37,
+      "http_success": 29,
+      "schema_valid": 29,
+      "failed": 8,
+      "unresolved": 8,
+      "actual_credits": 29,
+      "quoted_credits": 29
+    },
+    {
+      "endpoint": "profiler/dex-trades",
+      "attempts": 47,
+      "http_success": 47,
+      "schema_valid": 47,
+      "failed": 0,
+      "unresolved": 0,
+      "actual_credits": 47,
+      "quoted_credits": 47
+    },
+    {
+      "endpoint": "smart-money/dex-trades",
+      "attempts": 27,
+      "http_success": 27,
+      "schema_valid": 27,
+      "failed": 0,
+      "unresolved": 0,
+      "actual_credits": 135,
+      "quoted_credits": 135
+    },
+    {
+      "endpoint": "smart-money/netflow",
+      "attempts": 15,
+      "http_success": 15,
+      "schema_valid": 15,
+      "failed": 0,
+      "unresolved": 0,
+      "actual_credits": 75,
+      "quoted_credits": 75
+    },
+    {
+      "endpoint": "tgm/holders",
+      "attempts": 17,
+      "http_success": 16,
+      "schema_valid": 16,
+      "failed": 1,
+      "unresolved": 1,
+      "actual_credits": 80,
+      "quoted_credits": 80
+    },
+    {
+      "endpoint": "tgm/token-information",
+      "attempts": 16,
+      "http_success": 16,
+      "schema_valid": 16,
+      "failed": 0,
+      "unresolved": 0,
+      "actual_credits": 16,
+      "quoted_credits": 16
+    },
+    {
+      "endpoint": "tgm/token-ohlcv",
+      "attempts": 34,
+      "http_success": 31,
+      "schema_valid": 31,
+      "failed": 3,
+      "unresolved": 3,
+      "actual_credits": 31,
+      "quoted_credits": 31
+    }
+  ],
+  "byPurpose": [
+    {
+      "purpose": "balance_followup",
+      "attempts": 30,
+      "schema_valid": 30
+    },
+    {
+      "purpose": "quote_price",
+      "attempts": 30,
+      "schema_valid": 30
+    },
+    {
+      "purpose": "smart_money_global_feed",
+      "attempts": 9,
+      "schema_valid": 9
+    },
+    {
+      "purpose": "smart_money_netflow",
+      "attempts": 13,
+      "schema_valid": 13
+    },
+    {
+      "purpose": "smart_money_token_lookup",
+      "attempts": 14,
+      "schema_valid": 14
+    },
+    {
+      "purpose": "token_context",
+      "attempts": 14,
+      "schema_valid": 14
+    },
+    {
+      "purpose": "token_holders",
+      "attempts": 15,
+      "schema_valid": 14
+    },
+    {
+      "purpose": "verify_live:balance",
+      "attempts": 2,
+      "schema_valid": 2
+    },
+    {
+      "purpose": "verify_live:holders",
+      "attempts": 2,
+      "schema_valid": 2
+    },
+    {
+      "purpose": "verify_live:netflow",
+      "attempts": 2,
+      "schema_valid": 2
+    },
+    {
+      "purpose": "verify_live:pnl",
+      "attempts": 2,
+      "schema_valid": 2
+    },
+    {
+      "purpose": "verify_live:quote-price",
+      "attempts": 4,
+      "schema_valid": 1
+    },
+    {
+      "purpose": "verify_live:related",
+      "attempts": 2,
+      "schema_valid": 2
+    },
+    {
+      "purpose": "verify_live:sm-global",
+      "attempts": 2,
+      "schema_valid": 2
+    },
+    {
+      "purpose": "verify_live:sm-token",
+      "attempts": 2,
+      "schema_valid": 2
+    },
+    {
+      "purpose": "verify_live:token-info",
+      "attempts": 2,
+      "schema_valid": 2
+    },
+    {
+      "purpose": "verify_live:wallet-dex",
+      "attempts": 2,
+      "schema_valid": 2
+    },
+    {
+      "purpose": "wallet_history",
+      "attempts": 45,
+      "schema_valid": 45
+    },
+    {
+      "purpose": "wallet_profile",
+      "attempts": 45,
+      "schema_valid": 45
+    },
+    {
+      "purpose": "wallet_relationships",
+      "attempts": 35,
+      "schema_valid": 27
+    }
+  ],
+  "note": "Aggregate ledger evidence from local attempts. Reconcile against Nansen account usage; cache hits are not provider calls."
+}

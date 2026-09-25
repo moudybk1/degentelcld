@@ -1,0 +1,13 @@
+{
+  "name": "@packlens/contracts",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Shared PackLens domain and API contracts (types only).",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts"
+    }
+  }
+}
