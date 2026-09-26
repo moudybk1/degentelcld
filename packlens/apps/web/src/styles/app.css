@@ -3847,3 +3847,46 @@ table.wallet-packs {
     padding-bottom: 6px;
   }
 }
+
+/* Outside link to trade the token on Nansen: a compact bordered control in the accent. */
+.trade-link {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 11px;
+  border: 1px solid var(--red-line);
+  color: var(--red);
+  font-family: var(--f-mono);
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  overflow: hidden;
+  isolation: isolate;
+  transition: color 220ms var(--ease), border-color 220ms;
+}
+.trade-link::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: var(--red);
+  transform: translateY(101%);
+  transition: transform 300ms var(--ease-mech);
+}
+.trade-link:hover {
+  color: var(--red-ink);
+  border-color: var(--red);
+}
+.trade-link:hover::before {
+  transform: none;
+}
+.trade-link svg {
+  transition: transform 220ms var(--ease);
+}
+.trade-link:hover svg {
+  transform: translate(2px, -2px);
+}

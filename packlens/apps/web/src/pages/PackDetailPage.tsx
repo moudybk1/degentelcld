@@ -13,10 +13,10 @@ import { PackGlance } from "../components/PackGlance";
 import { packLead } from "../lib/packFacts";
 import { ruleUsd, useRule } from "../lib/rule";
 import { InfoTip } from "../components/InfoTip";
-import { Address, Empty, ErrorNote, ExtLink, KV, LoadingBlock, ModeBadge, Note, Reveal, Stat, Tag, TokenAvatar, useRowLimit, type FromState } from "../components/ui";
+import { Address, Empty, ErrorNote, ExtLink, KV, LoadingBlock, ModeBadge, Note, Reveal, Stat, Tag, TokenAvatar, TradeLink, useRowLimit, type FromState } from "../components/ui";
 import { dateTimeUtc, pct, rawAmount, relative, seconds, timeUtc, titleCase, usd } from "../lib/format";
 import { analysisLabel, matchLabel, REVIEW_FLAG_TEXT } from "../lib/labels";
-import { tokenUrl, txUrl } from "../lib/explorer";
+import { nansenTokenUrl, tokenUrl, txUrl } from "../lib/explorer";
 import { useNsHref } from "../state/namespace";
 
 function OperatorActions({ detail, onChange }: { detail: PackDetail; onChange: () => void }) {
@@ -218,6 +218,7 @@ export function PackDetailPage() {
             Triggered {dateTimeUtc(d.core.triggerEventTimeMs)} · {relative(d.core.triggerEventTimeMs, now)}
           </span>
           <span>Source: pump.fun</span>
+          {!synthetic && <TradeLink href={nansenTokenUrl(d.core.tokenAddress)} />}
         </div>
         {d.token.identitySource && (
           <p className="tiny muted" style={{ margin: "10px 0 0" }}>

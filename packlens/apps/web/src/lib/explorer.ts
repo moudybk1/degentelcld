@@ -26,6 +26,11 @@ export function dexScreenerUrl(mint: string): string | null {
   return valid(mint, 32, 44) ? `https://dexscreener.com/solana/${mint}` : null;
 }
 
+/** The token's page on Nansen (Token God Mode), where a signed-in user can swap it with the Nansen wallet. */
+export function nansenTokenUrl(mint: string): string | null {
+  return valid(mint, 32, 44) ? `https://app.nansen.ai/token-god-mode?tokenAddress=${mint}&chain=solana` : null;
+}
+
 export function nansenWalletUrl(address: string): string | null {
   return valid(address, 32, 44) ? `https://app.nansen.ai/profiler?address=${address}&chain=solana` : null;
 }

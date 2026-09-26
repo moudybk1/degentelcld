@@ -143,6 +143,21 @@ export function ExtLink({ href, children }: { href: string | null; children: Rea
   );
 }
 
+/**
+ * Link to trade the token on Nansen: its token page, where a signed-in user swaps it
+ * with the Nansen wallet. A plain outside link; nothing here places or suggests a trade.
+ */
+export function TradeLink({ href }: { href: string | null }) {
+  if (!href) return null;
+  return (
+    <a className="trade-link" href={href} target="_blank" rel="noopener noreferrer" title="Opens this token on Nansen. Swapping there needs a Nansen account and wallet.">
+      Trade on Nansen
+      <ArrowUpRight size={12} weight="bold" aria-hidden="true" />
+      <span className="sr-only">(opens in a new tab)</span>
+    </a>
+  );
+}
+
 /** Token logo when one is stored; otherwise (or if it fails to load) a monogram in a stable tone. */
 export function TokenAvatar({ mint, symbol, name, image, large }: { mint: string; symbol: string | null; name: string | null; image?: string | null; large?: boolean }) {
   const tone = avatarTone(mint);

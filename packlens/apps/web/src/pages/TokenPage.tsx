@@ -5,9 +5,9 @@ import { useApi, useNow } from "../api/hooks";
 import { HoldersCard, TokenInfoCard } from "../components/ContextPanels";
 import { PackCard } from "../components/PackCard";
 import { SmartMoneySection } from "../components/SmartMoneyPanel";
-import { Address, Empty, ErrorNote, ExtLink, LoadingBlock, ModeBadge, Reveal, Tag, TokenAvatar, type FromState } from "../components/ui";
+import { Address, Empty, ErrorNote, ExtLink, LoadingBlock, ModeBadge, Reveal, Tag, TokenAvatar, TradeLink, type FromState } from "../components/ui";
 import { dateTimeUtc, relative, shortAddr } from "../lib/format";
-import { dexScreenerUrl, pumpFunUrl, tokenUrl } from "../lib/explorer";
+import { dexScreenerUrl, nansenTokenUrl, pumpFunUrl, tokenUrl } from "../lib/explorer";
 import { useNsHref } from "../state/namespace";
 
 export function TokenPage() {
@@ -66,6 +66,7 @@ export function TokenPage() {
               {!synthetic && <ExtLink href={pumpFunUrl(mint)}>pump.fun</ExtLink>}
               {!synthetic && <ExtLink href={dexScreenerUrl(mint)}>DexScreener</ExtLink>}
               {!synthetic && <ExtLink href={tokenUrl(mint)}>Solscan</ExtLink>}
+              {!synthetic && <TradeLink href={nansenTokenUrl(mint)} />}
             </div>
             <p className="small muted token-facts">
               {data.createdAt ? `Created ${dateTimeUtc(data.createdAt)} (${relative(data.createdAt, now)})` : data.firstSeenInSource ? `First seen ${dateTimeUtc(data.firstSeenInSource)}; its creation was not observed` : "Not seen in the monitored pump.fun stream"}
