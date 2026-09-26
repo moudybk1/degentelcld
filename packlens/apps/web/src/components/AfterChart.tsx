@@ -8,11 +8,15 @@ import { shortAddr, timeUtc } from "../lib/format";
  * (down-triangle). One axis, hairline grid, crosshair tooltip with keyboard
  * support, selective direct labels, and a table-view twin.
  */
-const INK = "#4B1015";
-const BUY = "#D71920"; // brand signal red: pack buys are the focus
-const SELL = "#1F5F8F"; // distinct hue and shape (triangle) for sells
-const GRID = "#F0E6E6";
-const SURFACE = "#FFFFFF";
+const INK = "#EAEAEA"; // white phosphor price line
+const BUY = "#FF2A2A"; // hazard red: pack buys are the focus
+const SELL = "#0A0A0A"; // hollow triangle with a light outline, so sells differ by shape and fill
+const SELL_EDGE = "#EAEAEA";
+const GRID = "#1F1F22";
+const ZERO = "#46464C";
+const TICK = "#8D8D93";
+const SURFACE = "#111112";
+const MONO = "IBM Plex Mono, ui-monospace, monospace";
 
 function niceStep(range: number, target = 4): number {
   const raw = range / target;
@@ -142,7 +146,7 @@ export function AfterChart({
           Pack buy
         </span>
         <span>
-          <svg width="12" height="12"><polygon points={tri(6, 6, 5)} fill={SELL} stroke={SURFACE} strokeWidth="1.5" /></svg>
+          <svg width="12" height="12"><polygon points={tri(6, 6, 5)} fill={SELL} stroke={SELL_EDGE} strokeWidth="1.5" /></svg>
           Pack wallet sell
         </span>
       </div>
@@ -171,8 +175,8 @@ export function AfterChart({
         >
           {geo.yTicks.map((v) => (
             <g key={v}>
-              <line x1={m.left} x2={m.left + iw} y1={y(v)} y2={y(v)} stroke={v === 0 ? "#E0CFD0" : GRID} strokeWidth="1" />
-              <text x={m.left - 8} y={y(v) + 4} textAnchor="end" fontSize="11" fill="#A98386" style={{ fontVariantNumeric: "tabular-nums" }}>
+              <line x1={m.left} x2={m.left + iw} y1={y(v)} y2={y(v)} stroke={v === 0 ? ZERO : GRID} strokeWidth="1" strokeDasharray={v === 0 ? undefined : "2 3"} />
+              <text x={m.left - 8} y={y(v) + 4} textAnchor="end" fontSize="10" fill={TICK} fontFamily={MONO} style={{ fontVariantNumeric: "tabular-nums" }}>
                 {v === 0 ? "0%" : signed(v)}
               </text>
             </g>
@@ -181,38 +185,41 @@ export function AfterChart({
             x={m.left + iw - 4}
             y={last && Math.abs(y(last.changePct) - y(0)) < 18 && y(last.changePct) <= y(0) ? y(0) + 15 : y(0) - 6}
             textAnchor="end"
-            fontSize="11"
-            fill="#7C484C"
+            fontSize="10"
+            fill={TICK}
+            fontFamily={MONO}
+            letterSpacing="0.08em"
             stroke={SURFACE}
             strokeWidth="3"
             paintOrder="stroke"
           >
-            Pack entry
+            PACK ENTRY
           </text>
           {geo.xTicks.map((t, i) => (
-            <text key={i} x={x(t)} y={height - 8} textAnchor={i === 0 ? "start" : i === geo.xTicks.length - 1 ? "end" : "middle"} fontSize="11" fill="#A98386" style={{ fontVariantNumeric: "tabular-nums" }}>
+            <text key={i} x={x(t)} y={height - 8} textAnchor={i === 0 ? "start" : i === geo.xTicks.length - 1 ? "end" : "middle"} fontSize="10" fill={TICK} fontFamily={MONO} style={{ fontVariantNumeric: "tabular-nums" }}>
               {timeUtc(t).replace(" UTC", "")}
             </text>
           ))}
-          <line x1={x(triggerMs)} x2={x(triggerMs)} y1={m.top} y2={m.top + ih} stroke="#A98386" strokeWidth="1" />
-          <text x={x(triggerMs) + 5} y={m.top - 8} fontSize="11" fill="#7C484C">
-            Pack formed
+          <line x1={x(triggerMs)} x2={x(triggerMs)} y1={m.top} y2={m.top + ih} stroke={BUY} strokeWidth="1" strokeDasharray="3 3" />
+          <text x={x(triggerMs) + 6} y={m.top - 8} fontSize="10" fill={BUY} fontFamily={MONO} letterSpacing="0.08em">
+            PACK FORMED
           </text>
-          <path d={path} fill="none" stroke={INK} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
+          <path key={zoom ?? "all"} className="draw" pathLength={1} d={path} fill="none" stroke={INK} strokeWidth="1.6" strokeLinejoin="miter" strokeLinecap="square" />
           {viewMarkers.filter((mk) => mk.kind === "pack_buy").map((mk, i) => (
-            <circle key={`b${i}`} cx={x(mk.t)} cy={y(mk.changePct)} r="4.5" fill={BUY} stroke={SURFACE} strokeWidth="2" />
+            <circle key={`b${i}`} className="mark-in" style={{ ["--i" as string]: i }} cx={x(mk.t)} cy={y(mk.changePct)} r="4.5" fill={BUY} stroke={SURFACE} strokeWidth="2" />
           ))}
           {viewMarkers.filter((mk) => mk.kind === "member_sell").map((mk, i) => (
-            <polygon key={`s${i}`} points={tri(x(mk.t), y(mk.changePct), 5.5)} fill={SELL} stroke={SURFACE} strokeWidth="1.5" strokeLinejoin="round" />
+            <polygon key={`s${i}`} className="mark-in" style={{ ["--i" as string]: i }} points={tri(x(mk.t), y(mk.changePct), 5.5)} fill={SELL} stroke={SELL_EDGE} strokeWidth="1.5" strokeLinejoin="round" />
           ))}
           {peak && last && !(peak.t === last.t && Math.abs(peak.changePct - last.changePct) < 0.05) && (
             <text
               x={Math.min(Math.max(x(peak.t), m.left + 40), m.left + iw - 40)}
               y={Math.max(y(peak.changePct) - 10, m.top + 10)}
               textAnchor="middle"
-              fontSize="11.5"
-              fill="#4B1015"
-              fontWeight="600"
+              fontSize="10.5"
+              fill={INK}
+              fontFamily={MONO}
+              fontWeight="500"
               stroke={SURFACE}
               strokeWidth="3"
               paintOrder="stroke"
@@ -222,15 +229,15 @@ export function AfterChart({
           )}
           {last && (
             <>
-              <circle cx={x(last.t)} cy={y(last.changePct)} r="4" fill={INK} stroke={SURFACE} strokeWidth="2" />
-              <text x={x(last.t) + 8} y={y(last.changePct) + 4} fontSize="11.5" fill="#4B1015" fontWeight="600">
+              <rect className="mark-in" x={x(last.t) - 4} y={y(last.changePct) - 4} width="8" height="8" fill={INK} stroke={SURFACE} strokeWidth="2" />
+              <text className="mark-in" x={x(last.t) + 9} y={y(last.changePct) + 4} fontSize="11" fill={INK} fontFamily={MONO} fontWeight="500">
                 {signed(last.changePct)}
               </text>
             </>
           )}
           {hp && (
             <g pointerEvents="none">
-              <line x1={x(hp.t)} x2={x(hp.t)} y1={m.top} y2={m.top + ih} stroke="#4B1015" strokeWidth="1" opacity="0.35" />
+              <line x1={x(hp.t)} x2={x(hp.t)} y1={m.top} y2={m.top + ih} stroke={INK} strokeWidth="1" opacity="0.4" strokeDasharray="3 3" />
               <circle cx={x(hp.t)} cy={y(hp.changePct)} r="4.5" fill={INK} stroke={SURFACE} strokeWidth="2" />
             </g>
           )}
@@ -244,7 +251,7 @@ export function AfterChart({
                 {mk.kind === "pack_buy" ? (
                   <svg width="10" height="10"><circle cx="5" cy="5" r="4" fill={BUY} /></svg>
                 ) : (
-                  <svg width="10" height="10"><polygon points={tri(5, 5, 4.5)} fill={SELL} /></svg>
+                  <svg width="10" height="10"><polygon points={tri(5, 5, 4.5)} fill={SELL} stroke={SELL_EDGE} strokeWidth="1.2" /></svg>
                 )}
                 <span>
                   {mk.kind === "pack_buy" ? "Pack buy" : "Pack wallet sell"} · {Number(mk.solAmount).toFixed(3)} SOL · <span className="mono">{shortAddr(mk.wallet)}</span>

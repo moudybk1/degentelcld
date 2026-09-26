@@ -124,7 +124,7 @@ export function GuidePage() {
           Reading the Pack Radar
         </h2>
         <div className="bento">
-          <div className="span-6">
+          <div className="span-6 guide-cell">
             <ol className="callouts">
               <li>
                 <strong>Each row is one pack:</strong> {rule.minUniqueWallets} or more different wallets that each bought at least {ruleUsd(rule)} of the same token within {rule.triggerWindowSeconds} seconds. <em>Forming</em> means it can still gain wallets; otherwise the list is final.
@@ -146,7 +146,7 @@ export function GuidePage() {
               </li>
             </ol>
           </div>
-          <div className="span-6">
+          <div className="span-6 guide-cell">
             <div inert aria-hidden="true">
               <PackCard item={EXAMPLE} now={now} />
             </div>

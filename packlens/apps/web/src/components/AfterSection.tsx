@@ -153,7 +153,7 @@ export function AfterSection({ core, after, synthetic }: { core: Pack; after: Af
                 <td>
                   <Address value={r.walletAddress} href={href(`/wallets/solana/${r.walletAddress}`)} />
                 </td>
-                <td>{r.memberKind === "initial" ? <Tag>Initial</Tag> : <Tag tone="yellow">Expanded</Tag>}</td>
+                <td>{r.memberKind === "initial" ? <Tag>Initial</Tag> : <Tag tone="outline">Expanded</Tag>}</td>
                 <td className="num">{decimal(r.tokensBought, 0)}</td>
                 <td className="num">
                   {r.soldShare >= 0.99 ? <Tag tone="red">All sold</Tag> : r.soldShare > 0 ? <span>{Math.round(r.soldShare * 100)}%</span> : <span className="muted">Holding</span>}

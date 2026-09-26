@@ -58,6 +58,42 @@ function OperatorActions({ detail, onChange }: { detail: PackDetail; onChange: (
   );
 }
 
+/**
+ * The page's section index. The link for the section currently under the
+ * sticky bars is marked, so readers always know where they are.
+ */
+function SectionNav({ items }: { items: string[][] }) {
+  const [active, setActive] = useState<string | null>(null);
+  const key = items.map((i) => i[0]).join(",");
+  useEffect(() => {
+    if (typeof IntersectionObserver === "undefined") return;
+    const els = items.map(([id]) => document.getElementById(id!)).filter((e): e is HTMLElement => e !== null);
+    const seen = new Map<string, boolean>();
+    const io = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries) seen.set(e.target.id, e.isIntersecting);
+        const first = items.find(([id]) => seen.get(id!));
+        if (first) setActive(first[0]!);
+        // Above the first section (the page header), no section is current.
+        else if (els[0] && els[0].getBoundingClientRect().top > 140) setActive(null);
+      },
+      { rootMargin: "-140px 0px -55% 0px" },
+    );
+    els.forEach((el) => io.observe(el));
+    return () => io.disconnect();
+    // The id list (key) is the dependency; the array itself is rebuilt every render.
+  }, [key]);
+  return (
+    <nav className="section-nav" aria-label="Sections on this page">
+      {items.map(([idx, label]) => (
+        <a key={idx} href={`#${idx}`} className={active === idx ? "on" : undefined} aria-current={active === idx ? "location" : undefined}>
+          {label}
+        </a>
+      ))}
+    </nav>
+  );
+}
+
 export function PackDetailPage() {
   const { id = "" } = useParams();
   const href = useNsHref();
@@ -153,59 +189,52 @@ export function PackDetailPage() {
       </nav>
 
       {/* 1. Identity, source, mode, time, persistence */}
-      <Reveal>
-        <header className="page-head" style={{ marginTop: 20, alignItems: "flex-start" }}>
-          <div className="row" style={{ gap: 18, alignItems: "flex-start", flexWrap: "nowrap", minWidth: 0 }}>
-            <TokenAvatar mint={d.core.tokenAddress} symbol={d.token.symbol} name={d.token.name} image={d.token.imageUrl} large />
-            <div style={{ minWidth: 0 }}>
-              <div className="row" style={{ gap: 8 }}>
-                <ModeBadge mode={meta?.mode} />
-                {d.core.state === "collecting" ? (
-                  <Tag tone="blue" dot pulse title="The pack can still gain wallets">
-                    Forming
-                  </Tag>
-                ) : (
-                  <Tag tone="outline" title="The list of wallets is final">
-                    Final
-                  </Tag>
-                )}
-                {d.isDemoPinned && <Tag tone="yellow">Demo pinned</Tag>}
-                {d.coverage.auditedInvalidated && <Tag tone="red">Invalidated</Tag>}
-              </div>
-              <h1 className="display" style={{ fontSize: "clamp(34px, 5vw, 54px)" }}>
-                {tokenName} {d.token.symbol && <em>{d.token.symbol}</em>}
-              </h1>
-              <div className="row" style={{ gap: 14, marginTop: 8 }}>
-                <Address value={d.core.tokenAddress} href={href(`/tokens/solana/${d.core.tokenAddress}`)} external={synthetic ? null : tokenUrl(d.core.tokenAddress)} head={6} tail={6} copyLabel="Copy token address" state={fromHere} />
-                <span className="small muted">
-                  Triggered {dateTimeUtc(d.core.triggerEventTimeMs)} · {relative(d.core.triggerEventTimeMs, now)}
-                </span>
-                <span className="small muted">Source: pump.fun</span>
-              </div>
-              {d.token.identitySource && (
-                <p className="tiny muted" style={{ margin: "6px 0 0" }}>
-                  Name and symbol from {d.token.identitySource === "pumpfun_create_event" ? "the pump.fun create event" : "Nansen token information"}; token text is shown as untrusted data.
-                </p>
-              )}
-            </div>
+      <header className="id-head">
+        <div className="row" style={{ gap: 22, alignItems: "flex-end", flexWrap: "nowrap", minWidth: 0 }}>
+          <TokenAvatar mint={d.core.tokenAddress} symbol={d.token.symbol} name={d.token.name} image={d.token.imageUrl} large />
+          <div className="row" style={{ gap: 8, minWidth: 0 }}>
+            <ModeBadge mode={meta?.mode} />
+            {d.core.state === "collecting" ? (
+              <Tag tone="blue" dot pulse title="The pack can still gain wallets">
+                Forming
+              </Tag>
+            ) : (
+              <Tag tone="outline" title="The list of wallets is final">
+                Final
+              </Tag>
+            )}
+            {d.isDemoPinned && <Tag tone="yellow">Demo pinned</Tag>}
+            {d.coverage.auditedInvalidated && <Tag tone="red">Invalidated</Tag>}
           </div>
+          <span className="spacer" />
           <OperatorActions detail={d} onChange={reload} />
-        </header>
-      </Reveal>
+        </div>
+        <h1 className="display">
+          {tokenName} {d.token.symbol && <em>{d.token.symbol}</em>}
+        </h1>
+        <div className="id-meta">
+          <Address value={d.core.tokenAddress} href={href(`/tokens/solana/${d.core.tokenAddress}`)} external={synthetic ? null : tokenUrl(d.core.tokenAddress)} head={6} tail={6} copyLabel="Copy token address" state={fromHere} />
+          <span>
+            Triggered {dateTimeUtc(d.core.triggerEventTimeMs)} · {relative(d.core.triggerEventTimeMs, now)}
+          </span>
+          <span>Source: pump.fun</span>
+        </div>
+        {d.token.identitySource && (
+          <p className="tiny muted" style={{ margin: "10px 0 0" }}>
+            Name and symbol from {d.token.identitySource === "pumpfun_create_event" ? "the pump.fun create event" : "Nansen token information"}; token text is shown as untrusted data.
+          </p>
+        )}
+      </header>
 
-      <nav className="section-nav" aria-label="Sections on this page">
-        {[
+      <SectionNav
+        items={[
           ...(d.after ? [["sec-glance", "At a glance"], ["sec-after", "After the pack"], ["sec-earlier", "Earlier packs"]] : []),
           ["sec-members", "Wallets"],
           ["sec-sm", "Smart Money"],
           ["sec-context", "Context"],
           ["sec-technical", "Technical details"],
-        ].map(([idx, label]) => (
-          <a key={idx} href={`#${idx}`}>
-            {label}
-          </a>
-        ))}
-      </nav>
+        ]}
+      />
 
       {d.after && (
         <section id="sec-glance" style={{ marginTop: 28 }} aria-labelledby="sec-glance-h">
@@ -300,7 +329,7 @@ export function PackDetailPage() {
                       <Address value={m.walletAddress} href={href(`/wallets/solana/${m.walletAddress}`)} head={6} tail={4} state={fromHere} />
                       {profileWallets.has(m.walletAddress) && <span className="tiny muted"> · Nansen profile below</span>}
                     </td>
-                    <td>{m.memberKind === "initial" ? <Tag tone="gray">Started it</Tag> : <Tag tone="yellow">Joined later</Tag>}</td>
+                    <td>{m.memberKind === "initial" ? <Tag tone="gray">Started it</Tag> : <Tag tone="outline">Joined later</Tag>}</td>
                     <td className="mono small">
                       {timeUtc(m.firstEntryTimeMs)} <span className="muted">+{seconds(m.firstEntryTimeMs - d.core.firstEventTimeMs)}</span>
                       {m.memberKind === "expanded" && m.joinedAtEventTimeMs !== m.firstEntryTimeMs && (
@@ -569,7 +598,7 @@ export function PackDetailPage() {
             <h3 className="h3" style={{ marginBottom: 12 }}>
               Update history
             </h3>
-            <ol className="stack" style={{ gap: 10, margin: 0, padding: 0, listStyle: "none" }}>
+            <ol className="stack history-list" style={{ gap: 10, margin: 0, padding: 0, listStyle: "none" }}>
               {d.history.map((h, i) => (
                 <li key={i} className="kv small">
                   <span className="k mono">{dateTimeUtc(h.at)}</span>

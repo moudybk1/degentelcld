@@ -36,6 +36,29 @@ function healthView(status: SourceStatus | null, pulseHealth: string | undefined
   return { dot: "ok", text: `Detecting · last event ${age}`, title: "Connected to the pump.fun stream with a valid quote price." };
 }
 
+const pad = (n: number) => String(n).padStart(2, "0");
+
+/** A ticking UTC clock: every time in the app is UTC, so the reference is always in view. */
+function UtcClock() {
+  const now = useNow(1000);
+  const d = new Date(now);
+  return (
+    <span className="utc-clock" aria-hidden="true">
+      <b>
+        {pad(d.getUTCHours())}:{pad(d.getUTCMinutes())}:{pad(d.getUTCSeconds())}
+      </b>
+      &nbsp;UTC
+    </span>
+  );
+}
+
+const NAV: { to: string; label: string; end?: boolean }[] = [
+  { to: "/", label: "Pack Radar", end: true },
+  { to: "/wallets", label: "Wallets" },
+  { to: "/smart-money", label: "Smart Money" },
+  { to: "/guide", label: "Guide" },
+];
+
 export function TopBar({ status }: { status: SourceStatus | null }) {
   const href = useNsHref();
   const { pulse } = useEvents();
@@ -53,18 +76,14 @@ export function TopBar({ status }: { status: SourceStatus | null }) {
           </span>
         </NavLink>
         <nav className="nav" aria-label="Main">
-          <NavLink to={href("/")} end className={({ isActive }) => (isActive ? "active" : "")}>
-            Pack Radar
-          </NavLink>
-          <NavLink to={href("/wallets")} className={({ isActive }) => (isActive ? "active" : "")}>
-            Wallets
-          </NavLink>
-          <NavLink to={href("/smart-money")} className={({ isActive }) => (isActive ? "active" : "")}>
-            Smart Money
-          </NavLink>
-          <NavLink to={href("/guide")} className={({ isActive }) => (isActive ? "active" : "")}>
-            Guide
-          </NavLink>
+          {NAV.map((n, i) => (
+            <NavLink key={n.to} to={href(n.to)} end={n.end} className={({ isActive }) => (isActive ? "active" : "")}>
+              <span className="nav-idx" aria-hidden="true">
+                {String(i + 1).padStart(2, "0")}
+              </span>
+              {n.label}
+            </NavLink>
+          ))}
         </nav>
         <Search />
         <div className="topbar-right">
@@ -73,6 +92,7 @@ export function TopBar({ status }: { status: SourceStatus | null }) {
             <span className="status-text">{health.text}</span>
           </span>
           <ModeBadge mode={status?.mode} />
+          <UtcClock />
         </div>
       </div>
     </header>

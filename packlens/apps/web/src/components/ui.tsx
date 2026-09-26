@@ -10,9 +10,9 @@ export type Tone = "gray" | "red" | "blue" | "green" | "yellow" | "outline";
 /** Router state for breadcrumbs: the page the reader came from. */
 export type FromState = { from?: { label: string; href: string } };
 
-export function Tag({ tone = "gray", children, dot, pulse, title }: { tone?: Tone; children: ReactNode; dot?: boolean; pulse?: boolean; title?: string }) {
+export function Tag({ tone = "gray", children, dot, pulse, title, className }: { tone?: Tone; children: ReactNode; dot?: boolean; pulse?: boolean; title?: string; className?: string }) {
   return (
-    <span className={`tag ${tone}`} title={title}>
+    <span className={`tag ${tone}${className ? ` ${className}` : ""}`} title={title}>
       {dot && <span className={`dot${pulse ? " pulse" : ""}`} aria-hidden="true" />}
       {children}
     </span>
@@ -21,7 +21,7 @@ export function Tag({ tone = "gray", children, dot, pulse, title }: { tone?: Ton
 
 export function ModeBadge({ mode }: { mode: Mode | null | undefined }) {
   if (!mode) return null;
-  if (mode === "live") return <Tag tone="green" dot pulse title="Live data from the pump.fun stream and Nansen">Live</Tag>;
+  if (mode === "live") return <Tag tone="green" className="live" dot title="Live data from the pump.fun stream and Nansen">Live</Tag>;
   if (mode === "replay") return <Tag tone="yellow" dot title="Replay of a recorded dataset with its original times">Replay</Tag>;
   return <Tag tone="blue" dot title="Synthetic fixture data for offline use; not market observations">Example</Tag>;
 }

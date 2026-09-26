@@ -29,30 +29,30 @@ export function Timeline({ core, members, evidence, meta }: { core: Pack; member
     <figure className="timeline" style={{ margin: 0 }}>
       <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label={`Timeline of ${evidence.length} buys across ${members.length} wallets. The pack formed at ${timeUtc(core.triggerEventTimeMs)}; joining closed at ${timeUtc(core.expansionEndMs)}.`}>
         {/* 20-second trigger window */}
-        <rect x={x(core.triggerEventTimeMs - 20_000)} y={top - 14} width={x(core.triggerEventTimeMs) - x(core.triggerEventTimeMs - 20_000)} height={H - top - 2} fill="#FFF2F2" />
+        <rect x={x(core.triggerEventTimeMs - 20_000)} y={top - 14} width={x(core.triggerEventTimeMs) - x(core.triggerEventTimeMs - 20_000)} height={H - top - 2} fill="rgba(255, 42, 42, 0.07)" />
         {/* Expansion interval */}
-        <rect x={x(core.triggerEventTimeMs)} y={top - 14} width={Math.max(0, x(core.expansionEndMs) - x(core.triggerEventTimeMs))} height={H - top - 2} fill="#FDF9F9" />
+        <rect x={x(core.triggerEventTimeMs)} y={top - 14} width={Math.max(0, x(core.expansionEndMs) - x(core.triggerEventTimeMs))} height={H - top - 2} fill="rgba(255, 255, 255, 0.025)" />
         {ticks.map((t) => (
           <g key={t}>
-            <line x1={x(t)} x2={x(t)} y1={top - 14} y2={H - 16} stroke="#F0E6E6" />
-            <text x={x(t)} y={H - 2} textAnchor="middle" fontSize="11" fill="#A98386" fontFamily="var(--font-mono)">
+            <line x1={x(t)} x2={x(t)} y1={top - 14} y2={H - 16} stroke="#1F1F22" strokeDasharray="2 3" />
+            <text x={x(t)} y={H - 2} textAnchor="middle" fontSize="10" fill="#8D8D93" fontFamily="var(--font-mono)">
               {tickLabel(t)}
             </text>
           </g>
         ))}
-        <line x1={x(core.triggerEventTimeMs)} x2={x(core.triggerEventTimeMs)} y1={top - 18} y2={H - 16} stroke="#4B1015" strokeWidth="1.5" />
-        <text x={x(core.triggerEventTimeMs) + 5} y={top - 20} fontSize="11" fill="#4B1015">
-          Pack formed
+        <line x1={x(core.triggerEventTimeMs)} x2={x(core.triggerEventTimeMs)} y1={top - 18} y2={H - 16} stroke="#FF2A2A" strokeWidth="1.5" />
+        <text x={x(core.triggerEventTimeMs) + 5} y={top - 20} fontSize="10" fill="#FF2A2A" fontFamily="var(--font-mono)" letterSpacing="0.08em">
+          PACK FORMED
         </text>
-        <line x1={x(core.expansionEndMs)} x2={x(core.expansionEndMs)} y1={top - 18} y2={H - 16} stroke="#7C484C" strokeWidth="1.2" strokeDasharray="4 3" />
-        <text x={nearRight(x(core.expansionEndMs)) ? x(core.expansionEndMs) - 5 : x(core.expansionEndMs) + 5} y={top - 20} fontSize="11" fill="#7C484C" textAnchor={nearRight(x(core.expansionEndMs)) ? "end" : "start"}>
-          Joining closes (+40 s)
+        <line x1={x(core.expansionEndMs)} x2={x(core.expansionEndMs)} y1={top - 18} y2={H - 16} stroke="#8D8D93" strokeWidth="1.2" strokeDasharray="4 3" />
+        <text x={nearRight(x(core.expansionEndMs)) ? x(core.expansionEndMs) - 5 : x(core.expansionEndMs) + 5} y={top - 20} fontSize="10" fill="#8D8D93" fontFamily="var(--font-mono)" letterSpacing="0.08em" textAnchor={nearRight(x(core.expansionEndMs)) ? "end" : "start"}>
+          JOINING CLOSES (+40 S)
         </text>
-        <text x={x(core.triggerEventTimeMs - 20_000) + 5} y={top - 20} fontSize="11" fill="#7C484C">
-          First 20 s
+        <text x={x(core.triggerEventTimeMs - 20_000) + 5} y={top - 20} fontSize="10" fill="#8D8D93" fontFamily="var(--font-mono)" letterSpacing="0.08em">
+          FIRST 20 S
         </text>
         {compact && (
-          <text x={0} y={top + 12} fontSize="12" fill="#7C484C">
+          <text x={0} y={top + 12} fontSize="11" fill="#8D8D93" fontFamily="var(--font-mono)">
             <tspan x={0}>{members.length} wallets,</tspan>
             <tspan x={0} dy={16}>one row each</tspan>
           </text>
@@ -64,20 +64,20 @@ export function Timeline({ core, members, evidence, meta }: { core: Pack; member
           return (
             <g key={m.walletAddress}>
               {!compact && (
-                <text x={0} y={y + 4} fontSize="12" fill={m.memberKind === "initial" ? "#4B1015" : "#7C484C"} fontFamily="var(--font-mono)">
+                <text x={0} y={y + 4} fontSize="12" fill={m.memberKind === "initial" ? "#EAEAEA" : "#8D8D93"} fontFamily="var(--font-mono)">
                   {shortAddr(m.walletAddress, 5, 4)}
                 </text>
               )}
-              {!compact && <line x1={labelW} x2={W - 16} y1={y} y2={y} stroke="#F6EFEF" />}
+              {!compact && <line x1={labelW} x2={W - 16} y1={y} y2={y} stroke="#1A1A1D" />}
               {evs.map((e) => {
                 const cx = x(e.blockTimeMs);
                 const role = roleOf.get(e.eventId) ?? "initial";
                 return role === "initial" ? (
-                  <circle key={e.eventId} cx={cx} cy={y} r={r} fill="#D71920">
+                  <circle key={e.eventId} cx={cx} cy={y} r={r} fill="#FF2A2A">
                     <title>{`${timeUtc(e.blockTimeMs)} · started the pack · ${e.tradeValueUsd ? `$${Number(e.tradeValueUsd).toFixed(2)}` : "no USD value"}`}</title>
                   </circle>
                 ) : (
-                  <rect key={e.eventId} x={cx - r + 1} y={y - r + 1} width={(r - 1) * 2} height={(r - 1) * 2} transform={`rotate(45 ${cx} ${y})`} fill="#FFFFFF" stroke="#7C484C" strokeWidth={compact ? 1.2 : 2}>
+                  <rect key={e.eventId} x={cx - r + 1} y={y - r + 1} width={(r - 1) * 2} height={(r - 1) * 2} transform={`rotate(45 ${cx} ${y})`} fill="#111112" stroke="#EAEAEA" strokeWidth={compact ? 1.2 : 1.6}>
                     <title>{`${timeUtc(e.blockTimeMs)} · joined later · ${e.tradeValueUsd ? `$${Number(e.tradeValueUsd).toFixed(2)}` : "no USD value"}`}</title>
                   </rect>
                 );
@@ -88,19 +88,19 @@ export function Timeline({ core, members, evidence, meta }: { core: Pack; member
       </svg>
       <figcaption className="legend" style={{ marginTop: 10 }}>
         <span>
-          <i style={{ background: "#D71920" }} />
+          <i style={{ background: "#FF2A2A", borderRadius: "50%" }} />
           Buy by a wallet that started it
         </span>
         <span>
-          <i style={{ background: "#FFFFFF", boxShadow: "inset 0 0 0 2px #956400", borderRadius: 2, transform: "rotate(45deg)" }} />
+          <i style={{ background: "#111112", boxShadow: "inset 0 0 0 1.5px #EAEAEA", transform: "rotate(45deg)" }} />
           Buy by a wallet that joined later
         </span>
         <span>
-          <i style={{ background: "#FFF2F2", borderRadius: 2 }} />
+          <i style={{ background: "rgba(255, 42, 42, 0.18)" }} />
           First 20 seconds
         </span>
         <span>
-          <i style={{ background: "#FDF9F9", borderRadius: 2 }} />
+          <i style={{ background: "rgba(255, 255, 255, 0.08)" }} />
           Joining window (until 40 s after the first buy)
         </span>
         <span>Axis: seconds from the first buy.</span>

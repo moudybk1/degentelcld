@@ -30,10 +30,9 @@ function timeTicks(fromMs: number, toMs: number, max: number): number[] {
   return ticks;
 }
 
-/** Column path: 4px rounded data end, square at the baseline. */
+/** Column path: square on every corner, drawn from the baseline up. */
 function column(x: number, y: number, w: number, h: number): string {
-  const r = Math.min(4, w / 2, h);
-  return `M${x},${y + h}V${y + r}Q${x},${y} ${x + r},${y}H${x + w - r}Q${x + w},${y} ${x + w},${y + r}V${y + h}Z`;
+  return `M${x},${y + h}V${y}H${x + w}V${y + h}Z`;
 }
 
 export function ActivityChart({
@@ -177,7 +176,12 @@ export function ActivityChart({
           })}
           {bars.map((b, i) =>
             b.packs > 0 ? (
-              <path key={b.startMs} className={`col${hover === i ? " hover" : ""}${hover !== null && hover !== i ? " dim" : ""}`} d={column(b.cx - b.w / 2, y(b.packs), b.w, y(0) - y(b.packs))} />
+              <path
+                key={b.startMs}
+                className={`col${hover === i ? " hover" : ""}${hover !== null && hover !== i ? " dim" : ""}`}
+                d={column(b.cx - b.w / 2, y(b.packs), b.w, y(0) - y(b.packs))}
+                style={{ ["--i" as string]: i }}
+              />
             ) : null,
           )}
           {busiest && busiest.packs > 0 && hover === null && (

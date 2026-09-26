@@ -4,7 +4,7 @@ import type { WalletPackRow, WalletPageData } from "@packlens/contracts";
 import { track } from "../api/client";
 import { useApi, useNow } from "../api/hooks";
 import { WalletProfileCard } from "../components/ContextPanels";
-import { Address, Empty, ErrorNote, ExtLink, LoadingBlock, ModeBadge, Reveal, Tag, TokenAvatar, type FromState } from "../components/ui";
+import { Address, Empty, ErrorNote, ExtLink, LoadingBlock, ModeBadge, Tag, TokenAvatar, type FromState } from "../components/ui";
 import { relative, shortAddr, timeUtc, usd, usdCompact } from "../lib/format";
 import { accountUrl, nansenWalletUrl } from "../lib/explorer";
 import { duration, type FactTone } from "../lib/packFacts";
@@ -124,20 +124,18 @@ export function WalletPage() {
         <span aria-hidden="true">/</span>
         <span>Wallet {shortAddr(address)}</span>
       </nav>
-      <Reveal>
-        <header style={{ marginTop: 16 }}>
-          <div className="row" style={{ gap: 8 }}>
-            <ModeBadge mode={meta?.mode} />
-            <Tag tone="outline">Solana wallet</Tag>
-          </div>
-          <h1 className="display mono wallet-title">{address}</h1>
-          <div className="row" style={{ gap: 14, marginTop: 10 }}>
-            <Address value={address} copyLabel="Copy wallet address" head={6} tail={6} />
-            {!synthetic && <ExtLink href={accountUrl(address)}>Solscan</ExtLink>}
-            {!synthetic && <ExtLink href={nansenWalletUrl(address)}>Nansen</ExtLink>}
-          </div>
-        </header>
-      </Reveal>
+      <header className="id-head">
+        <div className="row" style={{ gap: 8 }}>
+          <ModeBadge mode={meta?.mode} />
+          <Tag tone="outline">Solana wallet</Tag>
+        </div>
+        <h1 className="display mono wallet-title">{address}</h1>
+        <div className="id-meta">
+          <Address value={address} copyLabel="Copy wallet address" head={6} tail={6} />
+          {!synthetic && <ExtLink href={accountUrl(address)}>Solscan</ExtLink>}
+          {!synthetic && <ExtLink href={nansenWalletUrl(address)}>Nansen</ExtLink>}
+        </div>
+      </header>
 
       {error && !data ? (
         <div className="section">
@@ -150,7 +148,7 @@ export function WalletPage() {
       ) : data ? (
         <>
           {data.packs.length > 0 && !legacy && (
-            <section style={{ marginTop: 28 }} aria-labelledby="w-summary">
+            <section style={{ marginTop: 40 }} aria-labelledby="w-summary">
               <div className="glance-head">
                 <h2 className="h2" id="w-summary">
                   This wallet at a glance
@@ -214,7 +212,7 @@ export function WalletPage() {
                               </div>
                             </div>
                           </td>
-                          <td>{p.memberKind === "initial" ? <Tag tone="gray">Started it</Tag> : <Tag tone="yellow">Joined later</Tag>}</td>
+                          <td>{p.memberKind === "initial" ? <Tag tone="gray">Started it</Tag> : <Tag tone="outline">Joined later</Tag>}</td>
                           <td className="nowrap">
                             <div>{relative(p.firstEntryTimeMs, now)}</div>
                             <div className="tiny muted mono">{timeUtc(p.firstEntryTimeMs)}</div>

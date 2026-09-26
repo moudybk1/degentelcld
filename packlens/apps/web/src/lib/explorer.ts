@@ -30,15 +30,15 @@ export function nansenWalletUrl(address: string): string | null {
   return valid(address, 32, 44) ? `https://app.nansen.ai/profiler?address=${address}&chain=solana` : null;
 }
 
-/** Stable pastel for a token monogram, derived from the mint. */
+/** Stable monogram tile for a token, derived from the mint: graphite, ink, and red only. */
 export function avatarTone(mint: string): { bg: string; fg: string } {
   const tones = [
-    { bg: "#FDEBEC", fg: "#9F2F2D" },
-    { bg: "#E1F3FE", fg: "#1F6C9F" },
-    { bg: "#EDF3EC", fg: "#346538" },
-    { bg: "#FBF3DB", fg: "#956400" },
-    { bg: "#F1EEF8", fg: "#5B4A8B" },
-    { bg: "#F1F1EF", fg: "#5F5E5B" },
+    { bg: "#2A1113", fg: "#FF4D4D" },
+    { bg: "#1C1C1F", fg: "#EAEAEA" },
+    { bg: "#27272B", fg: "#B9B9BE" },
+    { bg: "#141416", fg: "#FF2A2A" },
+    { bg: "#EAEAEA", fg: "#0A0A0A" },
+    { bg: "#3A0E10", fg: "#F2F2F2" },
   ];
   let h = 0;
   for (let i = 0; i < mint.length; i++) h = (h * 31 + mint.charCodeAt(i)) >>> 0;

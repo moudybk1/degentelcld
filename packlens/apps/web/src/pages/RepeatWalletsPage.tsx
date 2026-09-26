@@ -20,7 +20,8 @@ function PnlCell({ row }: { row: RepeatWalletRow }) {
     const a = row.pnl.state.availability;
     return <span className="small muted">{a === "queued" ? "Profiling…" : a === "budget_paused" ? "Paused (credit limit)" : "Not profiled yet"}</span>;
   }
-  const tone = p.realizedPnlUsd && p.realizedPnlUsd.startsWith("-") ? "down" : "up";
+  const n = p.realizedPnlUsd ? Number(p.realizedPnlUsd) : 0;
+  const tone = n < 0 ? "down" : n > 0 ? "up" : "flat";
   return (
     <span className={`delta ${p.realizedPnlUsd ? tone : "flat"}`} title={`Realized PnL ${p.periodStart.slice(0, 10)} to ${p.periodEnd.slice(0, 10)} (Nansen)`}>
       {p.realizedPnlUsd ? signedUsd(p.realizedPnlUsd) : "n/a"}

@@ -49,31 +49,30 @@ export function TokenPage() {
         </div>
       ) : data ? (
         <>
-          <Reveal>
-            <header className="row" style={{ gap: 18, marginTop: 20, alignItems: "flex-start", flexWrap: "nowrap" }}>
+          <header className="id-head">
+            <div className="row" style={{ gap: 22, alignItems: "flex-end", flexWrap: "nowrap", minWidth: 0 }}>
               <TokenAvatar mint={mint} symbol={data.token.symbol} name={data.token.name} image={data.token.imageUrl} large />
-              <div style={{ minWidth: 0 }}>
-                <div className="row" style={{ gap: 8 }}>
-                  <ModeBadge mode={meta?.mode} />
-                  {data.isDemoPinned && <Tag tone="yellow">Demo pinned</Tag>}
-                </div>
-                <h1 className="display" style={{ fontSize: "clamp(34px, 5vw, 54px)" }}>
-                  {name} {data.token.symbol && <em>{data.token.symbol}</em>}
-                </h1>
-                <div className="row" style={{ gap: 14, marginTop: 8 }}>
-                  <Address value={mint} copyLabel="Copy token address" head={6} tail={6} />
-                  {!synthetic && <ExtLink href={pumpFunUrl(mint)}>pump.fun</ExtLink>}
-                  {!synthetic && <ExtLink href={dexScreenerUrl(mint)}>DexScreener</ExtLink>}
-                  {!synthetic && <ExtLink href={tokenUrl(mint)}>Solscan</ExtLink>}
-                </div>
-                <p className="small muted token-facts">
-                  {data.createdAt ? `Created ${dateTimeUtc(data.createdAt)} (${relative(data.createdAt, now)})` : data.firstSeenInSource ? `First seen ${dateTimeUtc(data.firstSeenInSource)}; its creation was not observed` : "Not seen in the monitored pump.fun stream"}
-                  {data.graduatedAt ? ` · Left the bonding curve ${dateTimeUtc(data.graduatedAt)}; later trades happen elsewhere and are not observed here` : ""}
-                  {` · ${data.packs.length} ${data.packs.length === 1 ? "pack" : "packs"} recorded`}
-                </p>
+              <div className="row" style={{ gap: 8 }}>
+                <ModeBadge mode={meta?.mode} />
+                <Tag tone="outline">Solana token</Tag>
+                {data.isDemoPinned && <Tag tone="yellow">Demo pinned</Tag>}
               </div>
-            </header>
-          </Reveal>
+            </div>
+            <h1 className="display">
+              {name} {data.token.symbol && <em>{data.token.symbol}</em>}
+            </h1>
+            <div className="id-meta">
+              <Address value={mint} copyLabel="Copy token address" head={6} tail={6} />
+              {!synthetic && <ExtLink href={pumpFunUrl(mint)}>pump.fun</ExtLink>}
+              {!synthetic && <ExtLink href={dexScreenerUrl(mint)}>DexScreener</ExtLink>}
+              {!synthetic && <ExtLink href={tokenUrl(mint)}>Solscan</ExtLink>}
+            </div>
+            <p className="small muted token-facts">
+              {data.createdAt ? `Created ${dateTimeUtc(data.createdAt)} (${relative(data.createdAt, now)})` : data.firstSeenInSource ? `First seen ${dateTimeUtc(data.firstSeenInSource)}; its creation was not observed` : "Not seen in the monitored pump.fun stream"}
+              {data.graduatedAt ? ` · Left the bonding curve ${dateTimeUtc(data.graduatedAt)}; later trades happen elsewhere and are not observed here` : ""}
+              {` · ${data.packs.length} ${data.packs.length === 1 ? "pack" : "packs"} recorded`}
+            </p>
+          </header>
 
           <section className="section" aria-labelledby="t-packs">
             <div className="section-head">

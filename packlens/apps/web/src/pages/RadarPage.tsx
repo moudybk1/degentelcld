@@ -8,6 +8,7 @@ import { ActivityChart } from "../components/ActivityChart";
 import { Highlights } from "../components/Highlights";
 import { HowItWorks } from "../components/HowItWorks";
 import { InfoTip } from "../components/InfoTip";
+import { Decode, Reticle } from "../components/motion";
 import { PackCard } from "../components/PackCard";
 import { PackTable } from "../components/PackTable";
 import { SizeBands } from "../components/SizeBands";
@@ -354,7 +355,9 @@ export function RadarPage({ status }: { status: SourceStatus | null }) {
       <header className="radar-head">
         <div className="radar-title">
           <div className="eyebrow">Solana · pump.fun</div>
-          <h1 className="h1">Pack Radar</h1>
+          <h1 className="h1">
+            Pack Radar<span className="h1-mark" aria-hidden="true">.</span>
+          </h1>
           <p className="radar-sub">
             Live groups of wallets buying the same token at almost the same time, with the transactions behind them and what happened next.
             {guideDismissed && (
@@ -367,20 +370,27 @@ export function RadarPage({ status }: { status: SourceStatus | null }) {
             )}
           </p>
         </div>
+        <Reticle windowSeconds={rule.triggerWindowSeconds} joinSeconds={rule.expansionSeconds} />
         <dl className="head-facts">
           <div className={`fact${disconnected ? " warn" : ""}`}>
             <dt>Last source event</dt>
-            <dd>{lastEvent ? relative(lastEvent, now) : "n/a"}</dd>
+            <dd>
+              <Decode text={lastEvent ? relative(lastEvent, now) : "n/a"} />
+            </dd>
             <dd className="fact-note">{lastEvent ? `Chain time ${timeUtc(lastEvent)}` : "Waiting for events"}</dd>
           </div>
           <div className="fact">
             <dt>Last pack</dt>
-            <dd>{status?.latestPackTriggerMs ? relative(status.latestPackTriggerMs, now) : "n/a"}</dd>
+            <dd>
+              <Decode text={status?.latestPackTriggerMs ? relative(status.latestPackTriggerMs, now) : "n/a"} />
+            </dd>
             <dd className="fact-note">{status?.latestPackTriggerMs ? timeUtc(status.latestPackTriggerMs) : "No packs detected yet"}</dd>
           </div>
           <div className="fact">
             <dt>Buys evaluated</dt>
-            <dd>{int(status?.counters.buys ?? null)}</dd>
+            <dd>
+              <Decode text={int(status?.counters.buys ?? null)} />
+            </dd>
             <dd className="fact-note">{status ? `${int(status.counters.eligible)} eligible · ${int(status.counters.unvalued)} unvalued · ${int(status.counters.late)} late` : "n/a"}</dd>
           </div>
         </dl>
@@ -703,7 +713,7 @@ function Kpi({ label, value, note, tip, hero }: { label: string; value: string |
         {label}
         {tip && <InfoTip k={tip} />}
       </span>
-      {value === null ? <Skeleton width="60%" height={hero ? 40 : 28} style={{ margin: "6px 0 4px" }} /> : <span className="kpi-value">{value}</span>}
+      {value === null ? <Skeleton width="60%" height={hero ? 72 : 30} style={{ margin: "14px 0 4px" }} /> : <Decode className="kpi-value" text={value} />}
       {note === null ? <Skeleton width="80%" height={12} /> : <span className="kpi-note">{note}</span>}
     </div>
   );
