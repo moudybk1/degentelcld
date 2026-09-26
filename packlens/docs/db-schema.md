@@ -1,6 +1,6 @@
 # PackLens database schema
 
-Generated from `migrations/` (0001_init.sql, 0002_price_policy.sql) by `npm run db:schema-doc`. Do not edit by hand.
+Generated from `migrations/` (0001_init.sql, 0002_price_policy.sql, 0003_token_lifecycle.sql, 0004_query_indexes.sql, 0005_token_images.sql) by `npm run db:schema-doc`. Do not edit by hand.
 
 SQLite runs in WAL mode with foreign keys enabled on every connection. Namespaces (`live:`, `fixture:`, `replay:`) isolate data; composite foreign keys keep references inside one namespace.
 
@@ -389,7 +389,7 @@ Foreign keys: (observation_id, namespace) → `smart_money_observations`(id, nam
 
 Foreign keys: (namespace, trigger_event_id) → `trade_events`(namespace, event_id); (namespace) → `namespaces`(id)
 
-Indexes: `packs_collecting`, `packs_mint`, `packs_recent`
+Indexes: `packs_trigger_event`, `packs_collecting`, `packs_mint`, `packs_recent`
 
 ## `poller_checkpoints`
 
@@ -493,6 +493,24 @@ Foreign keys: (namespace) → `namespaces`(id)
 
 Indexes: `sm_obs_time`, `sm_obs_hash`, `sm_obs_trader`, `sm_obs_sold`, `sm_obs_bought`
 
+## `token_images`
+
+| Column | Type | Null | Key | Default |
+|---|---|---|---|---|
+| `namespace` | TEXT | no | PK |  |
+| `chain` | TEXT | no | PK |  |
+| `mint` | TEXT | no | PK |  |
+| `state` | TEXT | no |  |  |
+| `source_url` | TEXT | yes |  |  |
+| `content_type` | TEXT | yes |  |  |
+| `bytes` | BLOB | yes |  |  |
+| `sha256` | TEXT | yes |  |  |
+| `attempts` | INTEGER | no |  | 0 |
+| `checked_at_ms` | INTEGER | no |  |  |
+| `error` | TEXT | yes |  |  |
+
+Foreign keys: (namespace) → `namespaces`(id)
+
 ## `token_smart_money_metrics`
 
 | Column | Type | Null | Key | Default |
@@ -534,6 +552,9 @@ Indexes: `token_sm_latest`
 | `create_signature` | TEXT | yes |  |  |
 | `created_event_time_ms` | INTEGER | yes |  |  |
 | `first_seen_at_ms` | INTEGER | no |  |  |
+| `token_total_supply_raw` | TEXT | yes |  |  |
+| `completed_at_ms` | INTEGER | yes |  |  |
+| `complete_signature` | TEXT | yes |  |  |
 
 Foreign keys: (namespace) → `namespaces`(id)
 
@@ -567,7 +588,7 @@ Foreign keys: (namespace) → `namespaces`(id)
 
 Foreign keys: (price_snapshot_id, namespace) → `price_snapshots`(id, namespace); (namespace) → `namespaces`(id)
 
-Indexes: `trade_events_normalized`, `trade_events_pending`, `trade_events_signature`, `trade_events_wallet_time`, `trade_events_token_time`
+Indexes: `trade_events_price_snapshot`, `trade_events_time`, `trade_events_normalized`, `trade_events_pending`, `trade_events_signature`, `trade_events_wallet_time`, `trade_events_token_time`
 
 ## Immutability triggers
 

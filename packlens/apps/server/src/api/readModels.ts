@@ -7,6 +7,8 @@ import type {
   EvidenceMeta,
   HoldersData,
   Netflow,
+  OverviewData,
+  OverviewPack,
   Pack,
   PackDetail,
   PackListData,
@@ -16,6 +18,7 @@ import type {
   PatternMetrics,
   RadarFilters,
   RelatedData,
+  SearchData,
   SmartMoneyActivityData,
   SmartMoneyActivityRow,
   TokenIdentity,
@@ -32,7 +35,7 @@ import type {
 import type { Clock } from "../clock.js";
 import { WSOL_MINT, type AppConfig } from "../config.js";
 import type { Db } from "../db/connection.js";
-import { canonical, Decimal, parseDecimal } from "../lib/decimal.js";
+import { canonical, canonicalString, Decimal, parseDecimal } from "../lib/decimal.js";
 import { sha256Hex } from "../lib/ids.js";
 import { canonicalJson } from "../lib/json.js";
 import { observedTopShare } from "../assessment/assessment.js";
@@ -126,18 +129,31 @@ export class ReadModels {
   }
 
   tokenIdentity(namespace: string, mint: string): TokenIdentity {
+    const img = this.db.prepare("SELECT sha256 FROM token_images WHERE namespace = ? AND chain = 'solana' AND mint = ? AND state = 'ok'").get(namespace, mint) as
+      | { sha256: string }
+      | undefined;
+    // The content hash in the URL lets browsers cache the logo for good.
+    const imageUrl = img ? `/api/tokens/solana/${mint}/image?namespace=${encodeURIComponent(namespace)}&v=${img.sha256.slice(0, 16)}` : null;
     const t = this.db.prepare("SELECT name, symbol FROM tokens WHERE namespace = ? AND chain = 'solana' AND mint = ?").get(namespace, mint) as
       | { name: string | null; symbol: string | null }
       | undefined;
-    if (t && (t.name || t.symbol)) return { chain: "solana", mint, name: t.name, symbol: t.symbol, identitySource: "pumpfun_create_event" };
+    if (t && (t.name || t.symbol)) return { chain: "solana", mint, name: t.name, symbol: t.symbol, identitySource: "pumpfun_create_event", imageUrl };
     const s = this.db
       .prepare("SELECT result_json FROM enrichment_snapshots WHERE namespace = ? AND endpoint = 'tgm/token-information' AND subject_id = ? AND availability = 'available' ORDER BY fetched_at_ms DESC LIMIT 1")
       .get(namespace, mint) as { result_json: string } | undefined;
     if (s) {
       const d = JSON.parse(s.result_json) as TokenInfoData | null;
-      if (d && (d.name || d.symbol)) return { chain: "solana", mint, name: d.name, symbol: d.symbol, identitySource: "nansen_token_information" };
+      if (d && (d.name || d.symbol)) return { chain: "solana", mint, name: d.name, symbol: d.symbol, identitySource: "nansen_token_information", imageUrl };
     }
-    return { chain: "solana", mint, name: null, symbol: null, identitySource: null };
+    return { chain: "solana", mint, name: null, symbol: null, identitySource: null, imageUrl };
+  }
+
+  /** The stored logo for a token, if any (display only). */
+  tokenImage(namespace: string, mint: string): { contentType: string; bytes: Buffer } | null {
+    const r = this.db.prepare("SELECT content_type, bytes FROM token_images WHERE namespace = ? AND chain = 'solana' AND mint = ? AND state = 'ok'").get(namespace, mint) as
+      | { content_type: string; bytes: Buffer }
+      | undefined;
+    return r ? { contentType: r.content_type, bytes: r.bytes } : null;
   }
 
   private latestAssessment(packId: string, totalMemberCount: number): Assessment {
@@ -199,33 +215,7 @@ export class ReadModels {
       asOf = c.asOf;
       after = { t: c.t, id: c.id };
     }
-    const where: string[] = ["p.namespace = ?", "p.total_wallet_count >= ?", "p.triggered_at_ms <= ?"];
-    const args: unknown[] = [namespace, filters.minWallets, asOf];
-    if (!filters.includeInvalidated) where.push("p.invalidated = 0");
-    if (filters.mint) {
-      where.push("p.mint = ?");
-      args.push(filters.mint);
-    }
-    if (filters.from) {
-      where.push("p.trigger_event_time_ms >= ?");
-      args.push(Date.parse(filters.from));
-    }
-    if (filters.to) {
-      where.push("p.trigger_event_time_ms <= ?");
-      args.push(Date.parse(filters.to));
-    }
-    const minUsd = parseDecimal(filters.minUsd);
-    if (minUsd.greaterThan(0)) {
-      // Approximate prefilter; the exact decimal comparison happens below.
-      where.push("p.eligible_buy_usd_approx >= ?");
-      args.push(minUsd.toNumber() * (1 - 1e-9));
-    }
-    if (filters.confirmedSmartMoneyOnly) {
-      where.push(
-        `EXISTS (SELECT 1 FROM pack_smart_money_contexts c WHERE c.pack_id = p.id AND c.confirmed_member_count > 0
-           AND c.context_version = (SELECT MAX(context_version) FROM pack_smart_money_contexts c2 WHERE c2.pack_id = p.id))`,
-      );
-    }
+    const { where, args, minUsd } = this.radarWhere(namespace, filters, asOf);
     const afterClause = "(p.trigger_event_time_ms < ? OR (p.trigger_event_time_ms = ? AND p.id < ?))";
     const batchStmt = this.db.prepare(`SELECT p.* FROM packs p WHERE ${where.join(" AND ")} AND ${afterClause} ORDER BY p.trigger_event_time_ms DESC, p.id DESC LIMIT ?`);
     const firstStmt = this.db.prepare(`SELECT p.* FROM packs p WHERE ${where.join(" AND ")} ORDER BY p.trigger_event_time_ms DESC, p.id DESC LIMIT ?`);
@@ -252,6 +242,171 @@ export class ReadModels {
       if (more) nextCursor = encodeCursor(this.cursorKey, { ns: namespace, fh: filterHash, t: lastScanned.trigger_event_time_ms, id: lastScanned.id, asOf });
     }
     return { items, nextCursor, asOf: new Date(asOf).toISOString(), filters };
+  }
+
+  /** SQL conditions shared by the radar list and the overview, so both always describe the same packs. */
+  private radarWhere(namespace: string, filters: RadarFilters, asOf: number): { where: string[]; args: unknown[]; minUsd: Decimal } {
+    const where: string[] = ["p.namespace = ?", "p.total_wallet_count >= ?", "p.triggered_at_ms <= ?"];
+    const args: unknown[] = [namespace, filters.minWallets, asOf];
+    if (!filters.includeInvalidated) where.push("p.invalidated = 0");
+    if (filters.mint) {
+      where.push("p.mint = ?");
+      args.push(filters.mint);
+    }
+    if (filters.from) {
+      where.push("p.trigger_event_time_ms >= ?");
+      args.push(Date.parse(filters.from));
+    }
+    if (filters.to) {
+      where.push("p.trigger_event_time_ms <= ?");
+      args.push(Date.parse(filters.to));
+    }
+    const minUsd = parseDecimal(filters.minUsd);
+    if (minUsd.greaterThan(0)) {
+      // Approximate prefilter; the exact decimal comparison happens in the caller.
+      where.push("p.eligible_buy_usd_approx >= ?");
+      args.push(minUsd.toNumber() * (1 - 1e-9));
+    }
+    if (filters.confirmedSmartMoneyOnly) {
+      where.push(
+        `EXISTS (SELECT 1 FROM pack_smart_money_contexts c WHERE c.pack_id = p.id AND c.confirmed_member_count > 0
+           AND c.context_version = (SELECT MAX(context_version) FROM pack_smart_money_contexts c2 WHERE c2.pack_id = p.id))`,
+      );
+    }
+    return { where, args, minUsd };
+  }
+
+  /**
+   * Radar overview: totals, activity over time, size bands, and rankings for
+   * the packs matching the radar filters. Stored pack columns only (no trade
+   * scans), so it stays cheap over long ranges. Periods before the namespace
+   * observed its first event, and collector gaps, are reported rather than
+   * shown as zero activity.
+   */
+  overview(namespace: string, filters: RadarFilters): OverviewData {
+    const mode = this.namespaceMode(namespace);
+    const newest = this.db.prepare("SELECT MAX(triggered_at_ms) AS t FROM packs WHERE namespace = ?").get(namespace) as { t: number | null };
+    const asOf = Math.max(this.clock.now(), newest.t ?? 0);
+    const ns = this.db.prepare("SELECT first_observed_event_ms FROM namespaces WHERE id = ?").get(namespace) as { first_observed_event_ms: number | null } | undefined;
+    const coverageStartMs = ns?.first_observed_event_ms ?? null;
+
+    const { where, args, minUsd } = this.radarWhere(namespace, filters, asOf);
+    const rows = (
+      this.db
+        .prepare(
+          `SELECT p.id, p.mint, p.trigger_event_time_ms AS t, p.total_wallet_count AS w, p.eligible_buy_usd AS usd,
+                  json_extract(p.patterns_json, '$.initialEntrySpanMs') AS span,
+                  json_extract(p.patterns_json, '$.cooccurrencePairCount') AS pairs
+             FROM packs p WHERE ${where.join(" AND ")} ORDER BY p.trigger_event_time_ms, p.id`,
+        )
+        .all(...args) as { id: string; mint: string; t: number; w: number; usd: string; span: number | null; pairs: number | null }[]
+    )
+      .filter((r) => !minUsd.greaterThan(0) || !parseDecimal(r.usd).lessThan(minUsd))
+      .map((r) => ({ ...r, usdD: parseDecimal(r.usd) }));
+
+    // Live ranges end now; fixture and replay data end at their last observed event.
+    let endMs = asOf;
+    if (mode !== "live") {
+      const last = this.db.prepare("SELECT MAX(event_time_ms) AS t FROM trade_events WHERE namespace = ?").get(namespace) as { t: number | null };
+      endMs = Math.max(last.t ?? 0, rows[rows.length - 1]?.t ?? 0) || asOf;
+    }
+    const reqFrom = filters.from ? Date.parse(filters.from) : null;
+    const reqTo = filters.to ? Date.parse(filters.to) : null;
+    const startCandidates = [reqFrom ?? coverageStartMs ?? rows[0]?.t ?? null, coverageStartMs].filter((v): v is number => v !== null);
+    const fromMs = startCandidates.length > 0 ? Math.max(...startCandidates) : null;
+    const toMs = reqTo !== null ? Math.min(reqTo, endMs) : endMs;
+    const range = fromMs !== null && toMs > fromMs ? { fromMs, toMs } : null;
+
+    let bucketMs = 60_000;
+    const buckets: OverviewData["buckets"] = [];
+    if (range) {
+      const sizes = [10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 10800, 21600, 43200, 86400].map((s) => s * 1000);
+      bucketMs = sizes.find((s) => (range.toMs - range.fromMs) / s <= 72) ?? Math.ceil((range.toMs - range.fromMs) / 72 / 86_400_000) * 86_400_000;
+      const first = Math.floor(range.fromMs / bucketMs) * bucketMs;
+      const sums = new Map<number, { packs: number; usd: Decimal }>();
+      for (let s = first; s <= range.toMs; s += bucketMs) sums.set(s, { packs: 0, usd: new Decimal(0) });
+      for (const r of rows) {
+        const b = sums.get(Math.floor(r.t / bucketMs) * bucketMs);
+        if (!b) continue;
+        b.packs += 1;
+        b.usd = b.usd.plus(r.usdD);
+      }
+      for (const [startMs, b] of sums) buckets.push({ startMs, packs: b.packs, eligibleBuyUsd: canonical(b.usd) });
+    }
+
+    const median = (xs: number[]): number | null => {
+      if (xs.length === 0) return null;
+      const s = [...xs].sort((a, b) => a - b);
+      const mid = Math.floor(s.length / 2);
+      return s.length % 2 ? s[mid]! : (s[mid - 1]! + s[mid]!) / 2;
+    };
+    const bands = [
+      { label: "3", min: 3, max: 3 },
+      { label: "4 to 5", min: 4, max: 5 },
+      { label: "6 to 9", min: 6, max: 9 },
+      { label: "10 to 19", min: 10, max: 19 },
+      { label: "20 to 49", min: 20, max: 49 },
+      { label: "50+", min: 50, max: null },
+    ].map((b) => ({ ...b, packs: rows.filter((r) => r.w >= b.min && (b.max === null || r.w <= b.max)).length }));
+
+    const toOverviewPack = (r: (typeof rows)[number]): OverviewPack => ({
+      id: r.id,
+      token: this.tokenIdentity(namespace, r.mint),
+      triggerEventTimeMs: r.t,
+      totalWalletCount: r.w,
+      eligibleBuyUsd: canonicalString(r.usd),
+      initialEntrySpanMs: r.span,
+      cooccurrencePairCount: r.pairs ?? 0,
+    });
+    const newestFirst = (a: (typeof rows)[number], b: (typeof rows)[number]) => b.t - a.t || (a.id < b.id ? 1 : -1);
+    const byWallets = [...rows].sort((a, b) => b.w - a.w || newestFirst(a, b)).slice(0, 5).map(toOverviewPack);
+    const byUsd = [...rows].sort((a, b) => b.usdD.comparedTo(a.usdD) || newestFirst(a, b)).slice(0, 5).map(toOverviewPack);
+
+    const perMint = new Map<string, { packs: number; usd: Decimal; latest: (typeof rows)[number] }>();
+    for (const r of rows) {
+      const m = perMint.get(r.mint);
+      if (!m) perMint.set(r.mint, { packs: 1, usd: r.usdD, latest: r });
+      else {
+        m.packs += 1;
+        m.usd = m.usd.plus(r.usdD);
+        if (newestFirst(r, m.latest) < 0) m.latest = r;
+      }
+    }
+    const repeatTokens = [...perMint.entries()]
+      .filter(([, m]) => m.packs > 1)
+      .sort(([, a], [, b]) => b.packs - a.packs || b.usd.comparedTo(a.usd) || newestFirst(a.latest, b.latest))
+      .slice(0, 5)
+      .map(([mint, m]) => ({ token: this.tokenIdentity(namespace, mint), packs: m.packs, eligibleBuyUsd: canonical(m.usd), latestPackId: m.latest.id, latestTriggerMs: m.latest.t }));
+
+    const gaps = range
+      ? (
+          this.db
+            .prepare("SELECT started_at_ms, ended_at_ms, reason FROM collector_gaps WHERE namespace = ? AND started_at_ms <= ? AND (ended_at_ms IS NULL OR ended_at_ms >= ?) ORDER BY started_at_ms")
+            .all(namespace, range.toMs, range.fromMs) as { started_at_ms: number; ended_at_ms: number | null; reason: string }[]
+        ).map((g) => ({ startMs: g.started_at_ms, endMs: g.ended_at_ms, reason: g.reason }))
+      : [];
+
+    return {
+      asOf: new Date(asOf).toISOString(),
+      range,
+      coverageStartMs,
+      totals: {
+        packs: rows.length,
+        tokens: perMint.size,
+        repeatTokens: [...perMint.values()].filter((m) => m.packs > 1).length,
+        eligibleBuyUsd: canonical(rows.reduce((a, r) => a.plus(r.usdD), new Decimal(0))),
+        medianWallets: median(rows.map((r) => r.w)),
+        maxWallets: rows.reduce<number | null>((a, r) => (a === null || r.w > a ? r.w : a), null),
+        medianEntrySpanMs: median(rows.flatMap((r) => (r.span === null ? [] : [r.span]))),
+        repeatPairPacks: rows.filter((r) => (r.pairs ?? 0) > 0).length,
+      },
+      bucketMs,
+      buckets,
+      sizeBands: bands,
+      gaps,
+      top: { byWallets, byUsd, repeatTokens },
+      filters,
+    };
   }
 
   private walletContext(namespace: string, wallet: string, mint: string | null, members: Set<string>): WalletContext {
@@ -368,10 +523,10 @@ export class ReadModels {
       .prepare("SELECT id FROM collector_gaps WHERE namespace = ? AND started_at_ms <= ? AND (ended_at_ms IS NULL OR ended_at_ms >= ?)")
       .all(ns, windowHigh, windowLow - 60_000) as { id: string }[];
     const late = this.db
-      .prepare("SELECT COUNT(*) AS n FROM trade_events WHERE namespace = ? AND mint = ? AND admission = 'late' AND event_time_ms BETWEEN ? AND ?")
+      .prepare("SELECT COUNT(*) AS n FROM trade_events WHERE namespace = ? AND chain = 'solana' AND mint = ? AND admission = 'late' AND event_time_ms BETWEEN ? AND ?")
       .get(ns, r.mint, windowLow, windowHigh) as { n: number };
     const unvalued = this.db
-      .prepare("SELECT COUNT(*) AS n FROM trade_events WHERE namespace = ? AND mint = ? AND side = 'buy' AND valuation_status <> 'valued' AND event_time_ms BETWEEN ? AND ?")
+      .prepare("SELECT COUNT(*) AS n FROM trade_events WHERE namespace = ? AND chain = 'solana' AND mint = ? AND side = 'buy' AND valuation_status <> 'valued' AND event_time_ms BETWEEN ? AND ?")
       .get(ns, r.mint, windowLow, windowHigh) as { n: number };
 
     const pinned = this.db.prepare("SELECT enabled FROM demo_pins WHERE namespace = ? AND chain = 'solana' AND mint = ?").get(ns, r.mint) as { enabled: number } | undefined;
@@ -446,19 +601,64 @@ export class ReadModels {
     const latestMint = packs[0]?.mint ?? null;
     const members = new Set<string>();
     if (packs[0]) for (const w of this.memberWallets(packs[0].pack_id)) members.add(w);
+    const total = this.db.prepare("SELECT COUNT(*) AS n FROM pack_members WHERE namespace = ? AND wallet = ?").get(namespace, wallet) as { n: number };
+    const firstSell = this.db.prepare(
+      "SELECT MIN(event_time_ms) AS t FROM trade_events WHERE namespace = ? AND chain = 'solana' AND wallet = ? AND mint = ? AND side = 'sell' AND event_time_ms >= ?",
+    );
+    const created = this.db.prepare("SELECT created_event_time_ms AS t FROM tokens WHERE namespace = ? AND chain = 'solana' AND mint = ?");
     return {
       walletAddress: wallet,
       context: this.walletContext(namespace, wallet, latestMint, members),
-      packs: packs.map((p) => ({
-        packId: p.pack_id,
-        tokenAddress: p.mint,
-        tokenSymbol: this.tokenIdentity(namespace, p.mint).symbol,
-        memberKind: p.member_kind,
-        firstEntryTimeMs: p.first_entry_time_ms,
-        eligibleBuyUsd: p.eligible_buy_usd,
-        triggerEventTimeMs: p.trigger_event_time_ms,
-      })),
+      packs: packs.map((p) => {
+        const token = this.tokenIdentity(namespace, p.mint);
+        return {
+          packId: p.pack_id,
+          tokenAddress: p.mint,
+          tokenSymbol: token.symbol,
+          token,
+          memberKind: p.member_kind,
+          firstEntryTimeMs: p.first_entry_time_ms,
+          eligibleBuyUsd: p.eligible_buy_usd,
+          triggerEventTimeMs: p.trigger_event_time_ms,
+          firstSellTimeMs: (firstSell.get(namespace, wallet, p.mint, p.first_entry_time_ms) as { t: number | null }).t,
+          tokenCreatedAtMs: (created.get(namespace, p.mint) as { t: number | null } | undefined)?.t ?? null,
+        };
+      }),
+      packCount: total.n,
     };
+  }
+
+  /** Top bar search. Tokens must have at least one pack in this namespace; a wallet matches only by exact address. */
+  search(namespace: string, query: string): SearchData {
+    const q = query.trim().slice(0, 64);
+    const tokens: SearchData["tokens"] = [];
+    let wallet: SearchData["wallet"] = null;
+    if (q.length === 0) return { query: q, tokens, wallet };
+    const withPacks = (mint: string) =>
+      this.db.prepare("SELECT id, trigger_event_time_ms AS t, COUNT(*) OVER () AS n FROM packs WHERE namespace = ? AND mint = ? ORDER BY trigger_event_time_ms DESC, id DESC LIMIT 1").get(namespace, mint) as
+        | { id: string; t: number; n: number }
+        | undefined;
+    if (/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(q)) {
+      const p = withPacks(q);
+      if (p) tokens.push({ token: this.tokenIdentity(namespace, q), packs: p.n, latestPackId: p.id, latestTriggerMs: p.t });
+      const w = this.db.prepare("SELECT COUNT(*) AS n FROM pack_members WHERE namespace = ? AND wallet = ?").get(namespace, q) as { n: number };
+      if (w.n > 0) wallet = { address: q, packs: w.n };
+      return { query: q, tokens, wallet };
+    }
+    const like = `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+    const rows = this.db
+      .prepare(
+        `SELECT t.mint FROM tokens t
+          WHERE t.namespace = ? AND t.chain = 'solana' AND (t.name LIKE ? ESCAPE '\\' OR t.symbol LIKE ? ESCAPE '\\')
+            AND EXISTS (SELECT 1 FROM packs p WHERE p.namespace = t.namespace AND p.mint = t.mint)
+          ORDER BY (SELECT MAX(p.trigger_event_time_ms) FROM packs p WHERE p.namespace = t.namespace AND p.mint = t.mint) DESC LIMIT 8`,
+      )
+      .all(namespace, like, like) as { mint: string }[];
+    for (const r of rows) {
+      const p = withPacks(r.mint)!;
+      tokens.push({ token: this.tokenIdentity(namespace, r.mint), packs: p.n, latestPackId: p.id, latestTriggerMs: p.t });
+    }
+    return { query: q, tokens, wallet };
   }
 
   tokenPage(namespace: string, mint: string): TokenPageData {
@@ -467,7 +667,7 @@ export class ReadModels {
     for (const p of packRows) for (const w of this.memberWallets(p.id)) members.add(w);
     const { tokenInfo, holders } = this.tokenPanels(namespace, mint, members);
     const windows = this.sm(namespace).latestWindows(mint);
-    const first = this.db.prepare("SELECT MIN(event_time_ms) AS t FROM trade_events WHERE namespace = ? AND mint = ?").get(namespace, mint) as { t: number | null };
+    const first = this.db.prepare("SELECT MIN(event_time_ms) AS t FROM trade_events WHERE namespace = ? AND chain = 'solana' AND mint = ?").get(namespace, mint) as { t: number | null };
     const pinned = this.db.prepare("SELECT enabled FROM demo_pins WHERE namespace = ? AND chain = 'solana' AND mint = ?").get(namespace, mint) as { enabled: number } | undefined;
     return {
       token: this.tokenIdentity(namespace, mint),
@@ -477,6 +677,12 @@ export class ReadModels {
       packs: packRows.map((p) => this.listItem(p)),
       isDemoPinned: pinned?.enabled === 1,
       firstSeenInSource: first.t === null ? null : new Date(first.t).toISOString(),
+      ...(() => {
+        const life = this.db.prepare("SELECT created_event_time_ms AS c, completed_at_ms AS g FROM tokens WHERE namespace = ? AND chain = 'solana' AND mint = ?").get(namespace, mint) as
+          | { c: number | null; g: number | null }
+          | undefined;
+        return { createdAt: life?.c ? new Date(life.c).toISOString() : null, graduatedAt: life?.g ? new Date(life.g).toISOString() : null };
+      })(),
     };
   }
 

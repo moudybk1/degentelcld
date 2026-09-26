@@ -6,9 +6,9 @@ import { Tag } from "./ui";
 export function availabilityLabel(state: PanelState, hasData: boolean): string {
   switch (state.availability) {
     case "not_requested":
-      return state.reasonCode === "session_ended" ? "Not analyzed; the session ended first" : "Not analyzed yet";
+      return state.reasonCode === "session_ended" ? "Not checked; the session ended first" : "Not checked yet";
     case "queued":
-      return "Queued for analysis";
+      return "Queued for checks";
     case "available":
       return state.reasonCode === "update_delayed" ? "Update delayed; showing the last checked data" : "Available";
     case "empty":
@@ -18,7 +18,7 @@ export function availabilityLabel(state: PanelState, hasData: boolean): string {
     case "error":
       return hasData ? "Update delayed" : "Could not load from the provider; update delayed";
     case "budget_paused":
-      return "Analysis paused";
+      return "Checks paused";
   }
 }
 
@@ -30,7 +30,7 @@ export function PanelStatus({ state, source, compact }: { state: PanelState; sou
     <div className="panel-state">
       <Tag tone={tone}>{hasData ? (state.availability === "empty" ? "Empty" : "Available") : availabilityLabel(state, false).split(";")[0]}</Tag>
       {state.coverage === "partial" && <Tag tone="yellow" title="Some pages, periods, or valuations are missing">Partial</Tag>}
-      {state.coverage === "window_scanned" && !compact && <Tag tone="outline" title="The provider response for this window was examined without known gaps; not a census of all on-chain activity">Window scanned</Tag>}
+      {state.coverage === "window_scanned" && !compact && <Tag tone="outline" title="Nansen's full results for this window were checked without known gaps; not a census of all on-chain activity">Full window checked</Tag>}
       {state.freshness === "stale" && <Tag tone="outline" title="Older than the refresh interval">Stale</Tag>}
       {!compact && (
         <span>

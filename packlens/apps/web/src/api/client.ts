@@ -48,7 +48,7 @@ export async function apiGet<T>(path: string, params: Record<string, string | nu
     res = await fetch(buildUrl(path, params), { credentials: "same-origin", headers: { Accept: "application/json" }, ...(signal ? { signal } : {}) });
   } catch (err) {
     if (err instanceof DOMException && err.name === "AbortError") throw err;
-    throw new ApiError(0, "NETWORK", "The PackLens server is not reachable.", null);
+    throw new ApiError(0, "NETWORK", "The Degentellegence server is not reachable.", null);
   }
   return parse(res);
 }
@@ -58,7 +58,7 @@ export async function apiRaw<T>(path: string, init: RequestInit = {}): Promise<T
   try {
     res = await fetch(path, { credentials: "same-origin", ...init, headers: { Accept: "application/json", ...(init.body ? { "Content-Type": "application/json" } : {}), ...(init.headers ?? {}) } });
   } catch {
-    throw new ApiError(0, "NETWORK", "The PackLens server is not reachable.", null);
+    throw new ApiError(0, "NETWORK", "The Degentellegence server is not reachable.", null);
   }
   return parse(res);
 }

@@ -1,8 +1,9 @@
 import { Link } from "react-router";
 import { ArrowUpRight } from "@phosphor-icons/react";
 import type { PackListItem } from "@packlens/contracts";
-import { pct, relative, seconds, timeUtc, usd } from "../lib/format";
+import { pct, relative, timeUtc, usd, usdCompact } from "../lib/format";
 import { analysisLabel, buyerCountText, confirmedText } from "../lib/labels";
+import { entryWindow, groupSold } from "../lib/packFacts";
 import { InfoTip } from "./InfoTip";
 import { Delta } from "./AfterSection";
 import { useNsHref } from "../state/namespace";
@@ -13,12 +14,14 @@ export function PackCard({ item, now }: { item: PackListItem; now: number }) {
   const { core, token, patterns } = item;
   const sm = buyerCountText(item.smartMoney1h, "1 hour");
   const analysis = analysisLabel(item.analysisState);
+  const smUnknown = item.smartMoney1h.countQualifier === "unknown" || item.smartMoney1h.observedUniqueBuyers === null;
+  const nothingChecked = smUnknown && item.confirmedMemberCount === null && item.analysisState === "not_requested";
   const expanded = core.totalWalletCount - core.initialWalletCount;
   const name = token.name || "Unknown token";
   return (
     <article className="card link pack-card" aria-labelledby={`pack-${core.id}`}>
       <div className="pack-top">
-        <TokenAvatar mint={core.tokenAddress} symbol={token.symbol} name={token.name} />
+        <TokenAvatar mint={core.tokenAddress} symbol={token.symbol} name={token.name} image={token.imageUrl} />
         <div className="pack-token">
           <h3 className="pack-token-name" id={`pack-${core.id}`} style={{ margin: 0 }}>
             <Link to={href(`/packs/${core.id}`)} className="stretched">
@@ -31,12 +34,20 @@ export function PackCard({ item, now }: { item: PackListItem; now: number }) {
               <Address value={core.tokenAddress} copyLabel="Copy token address" />
             </span>
             <span className="tiny muted" title={new Date(core.triggerEventTimeMs).toISOString()}>
-              Triggered {timeUtc(core.triggerEventTimeMs)} · {relative(core.triggerEventTimeMs, now)}
+              Formed {timeUtc(core.triggerEventTimeMs)} · {relative(core.triggerEventTimeMs, now)}
             </span>
           </div>
         </div>
         <div className="row" style={{ gap: 6 }}>
-          {core.state === "collecting" ? <Tag tone="blue" dot pulse>Collecting</Tag> : <Tag tone="outline">Frozen</Tag>}
+          {core.state === "collecting" ? (
+            <Tag tone="blue" dot pulse title="The pack can still gain wallets">
+              Forming
+            </Tag>
+          ) : (
+            <Tag tone="outline" title="The list of wallets is final">
+              Final
+            </Tag>
+          )}
           <ArrowUpRight className="pack-open" size={18} weight="bold" aria-hidden="true" />
         </div>
       </div>
@@ -53,7 +64,7 @@ export function PackCard({ item, now }: { item: PackListItem; now: number }) {
           </div>
         </div>
         <div>
-          <div className="metric-value">{usd(core.eligibleBuyUsd)}</div>
+          <div className="metric-value" title={usd(core.eligibleBuyUsd)}>{usdCompact(core.eligibleBuyUsd)}</div>
           <div className="metric-label">
             pack buys
             <span className="above">
@@ -62,9 +73,9 @@ export function PackCard({ item, now }: { item: PackListItem; now: number }) {
           </div>
         </div>
         <div>
-          <div className="metric-value">{seconds(patterns.initialEntrySpanMs)}</div>
+          <div className="metric-value">{entryWindow(patterns.initialEntrySpanMs)}</div>
           <div className="metric-label">
-            entry spread
+            entry window
             <span className="above">
               <InfoTip k="entrySpread" />
             </span>
@@ -74,7 +85,7 @@ export function PackCard({ item, now }: { item: PackListItem; now: number }) {
 
       <div className="indicator-line" aria-label="Pattern indicators">
         <span>
-          Size variation <b>{patterns.buySizeCV === null ? "—" : Number(patterns.buySizeCV).toFixed(2)}</b>
+          Size variation <b>{patterns.buySizeCV === null ? "n/a" : Number(patterns.buySizeCV).toFixed(2)}</b>
         </span>
         <span>
           Largest buyer <b>{pct(patterns.largestBuyerShare, 0)}</b>
@@ -109,15 +120,29 @@ export function PackCard({ item, now }: { item: PackListItem; now: number }) {
                   </span>
                 </>
               )}
-              <span>
-                <b>
-                  {item.after.membersSold} of {item.after.memberCount}
-                </b>{" "}
-                sold
-              </span>
+              {(() => {
+                const g = groupSold(item.after.membersSold, item.after.memberCount);
+                return (
+                  <Tag tone={g.tone} title={g.title}>
+                    {g.label}
+                  </Tag>
+                );
+              })()}
             </span>
           </div>
         )}
+        {nothingChecked ? (
+          <div className="kv">
+            <span className="k">
+              Smart Money and Nansen checks
+              <span className="above">
+                <InfoTip k="analysis" />
+              </span>
+            </span>
+            <span className="v muted">Not checked yet</span>
+          </div>
+        ) : (
+          <>
         <div className="kv">
           <span className="k">
             Smart Money buying this token, 1 h
@@ -126,7 +151,7 @@ export function PackCard({ item, now }: { item: PackListItem; now: number }) {
             </span>
           </span>
           <span className="v" title={sm.detail}>
-            {sm.headline} {sm.headline !== "Not checked" ? (item.smartMoney1h.observedUniqueBuyers === 1 ? "buyer" : "buyers") : ""}
+            {sm.headline} {!smUnknown ? (item.smartMoney1h.observedUniqueBuyers === 1 ? "buyer" : "buyers") : ""}
           </span>
         </div>
         <div className="kv">
@@ -140,7 +165,7 @@ export function PackCard({ item, now }: { item: PackListItem; now: number }) {
         </div>
         <div className="kv">
           <span className="k">
-            Wallet analysis
+            Nansen checks
             <span className="above">
               <InfoTip k="analysis" />
             </span>
@@ -149,6 +174,8 @@ export function PackCard({ item, now }: { item: PackListItem; now: number }) {
             <Tag tone={analysis.tone}>{analysis.text}</Tag>
           </span>
         </div>
+          </>
+        )}
       </div>
       {item.invalidated && <Tag tone="red">Invalidated after audit</Tag>}
     </article>

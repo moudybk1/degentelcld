@@ -147,7 +147,7 @@ describe("live flow with a fake provider", () => {
     expect(detail.smartMoney.packConfirmation.confirmedMemberCount).toBe(1);
     expect(detail.smartMoney.packConfirmation.totalMemberCount).toBe(3);
     expect(detail.smartMoney.netflow.data.values[0].netFlowUsd).toBe("52");
-    expect(detail.summary).toContain("1 of 3 pack members confirmed");
+    expect(detail.summary).toContain("1 of 3 pack wallets confirmed");
 
     // Every provider attempt is in the ledger with settled credits; the key never leaves the backend.
     const usage = (await app.inject({ url: "/api/admin/usage", headers: { cookie: `packlens_operator=${cookie}` } })).json().data;

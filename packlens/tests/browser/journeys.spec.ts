@@ -13,43 +13,87 @@ test("radar shows mode, source, and separate Smart Money metrics", async ({ page
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
   await page.goto("/");
-  await expect(page.getByText("Fixture", { exact: true }).first()).toBeVisible();
-  await expect(page.getByText("Synthetic fixture data")).toBeVisible();
-  const card = page.locator("article", { hasText: "Lantern Moth" });
-  await expect(card).toContainText("12 observed buyers");
-  await expect(card).toContainText("2 of 6");
-  await expect(card).toContainText("Analysis complete");
-  const finch = page.locator("article", { hasText: "Copper Finch" });
-  await expect(finch).toContainText("Not checked");
-  await expect(finch).toContainText("Not analyzed yet");
-  const harbor = page.locator("article", { hasText: "Quiet Harbor" });
+  await expect(page.getByText("Example", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("Example data", { exact: true })).toBeVisible();
+  const row = page.getByRole("row", { name: /Lantern Moth/ });
+  await expect(row).toContainText("12 observed buyers");
+  await expect(row).toContainText("2 of 6 confirmed");
+  await expect(row).toContainText("Nansen checks done");
+  const finch = page.getByRole("row", { name: /Copper Finch/ });
+  await expect(finch).toContainText("Not checked yet");
+  await expect(finch).not.toContainText("0 observed");
+  const harbor = page.getByRole("row", { name: /Quiet Harbor/ });
   await expect(harbor).toContainText("0 observed buyers");
-  await expect(harbor).toContainText("Analysis paused");
+  await expect(harbor).toContainText("Nansen checks paused");
   expect(errors).toEqual([]);
 });
 
-test("radar filters are labeled and never enabled automatically", async ({ page }) => {
+test("radar filters are labeled, apply immediately, and are never enabled automatically", async ({ page }) => {
   await page.goto("/");
+  const rows = page.locator("table.feed tbody tr");
+  await expect(rows).toHaveCount(5);
   await expect(page.getByText("Filter active")).toHaveCount(0);
   await page.getByLabel("Only packs with confirmed Smart Money members").check();
-  await page.getByRole("button", { name: "Apply" }).click();
   await expect(page.getByText("Filter active")).toBeVisible();
-  await expect(page.locator("article")).toHaveCount(1);
-  await expect(page.locator("article")).toContainText("Lantern Moth");
+  await expect(rows).toHaveCount(1);
+  await expect(rows).toContainText("Lantern Moth");
+  // The overview summarizes the same filtered packs.
+  await expect(page.locator(".kpi.hero .kpi-value")).toHaveText("1");
   await page.getByRole("button", { name: "Reset" }).click();
-  await expect(page.locator("article")).toHaveCount(5);
+  await expect(rows).toHaveCount(5);
+  await expect(page.locator(".kpi.hero .kpi-value")).toHaveText("5");
+  await page.getByLabel("Min. wallets").selectOption("4");
+  await expect(rows).toHaveCount(2);
+  await page.getByRole("button", { name: "Reset" }).click();
   await page.getByRole("textbox", { name: "Token address" }).fill("not-a-mint");
-  await page.getByRole("button", { name: "Apply" }).click();
+  await page.keyboard.press("Enter");
   await expect(page.getByText("Token address must be a Solana mint address.")).toBeVisible();
+  await expect(rows).toHaveCount(5);
+});
+
+test("radar overview summarizes the range, ranks packs, and drills into an interval", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  await page.goto("/");
+  const overview = page.getByRole("region", { name: "All time" });
+  await expect(overview.locator(".kpi.hero")).toContainText("5");
+  await expect(overview.getByRole("region", { name: "Largest packs" })).toContainText("Lantern Moth");
+  await expect(overview.getByRole("region", { name: "Packed repeatedly" })).toContainText("Salt Meridian");
+  await expect(overview.getByRole("region", { name: "Packed repeatedly" })).toContainText("2");
+  // Keyboard reading of the activity chart, then Enter lists the packs of one interval.
+  const chart = overview.getByRole("img", { name: /Packs per/ });
+  await chart.focus();
+  const tip = overview.locator(".chart-tip");
+  for (let i = 0; i < 80; i++) {
+    await page.keyboard.press("ArrowRight");
+    const text = (await tip.textContent()) ?? "";
+    if (!text.startsWith("0 packs")) break;
+  }
+  await expect(tip).toContainText("Click to list these packs");
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("button", { name: "Clear the selected interval" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Selected interval" })).toBeVisible();
+  const rows = page.locator("table.feed tbody tr");
+  // The previous rows stay on screen (dimmed) until the filtered list arrives.
+  await expect.poll(() => rows.count()).toBeLessThan(5);
+  await expect(rows.first()).toBeVisible();
+  await page.getByRole("button", { name: "Clear the selected interval" }).click();
+  await expect(rows).toHaveCount(5);
+  // A preset range ends at the latest fixture pack, so historical data still shows.
+  await page.getByRole("group", { name: "Time range" }).getByRole("button", { name: "1 h" }).click();
+  await expect(page.getByRole("region", { name: "Last hour" })).toBeVisible();
+  await expect(rows).toHaveCount(5);
+  expect(errors).toEqual([]);
 });
 
 test("radar → pack → wallet → back, then refresh keeps the stored pack", async ({ page }) => {
   await openPack(page, "Lantern Moth");
-  await expect(page.getByText("3 wallets made eligible buys within 6 seconds.")).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Formation" })).toBeVisible();
-  // Initial versus expanded members, with evidence rows.
-  await expect(page.locator("table").first().getByText("Initial", { exact: true })).toHaveCount(3);
-  await expect(page.locator("table").first().getByText("Expanded", { exact: true })).toHaveCount(3);
+  await expect(page.getByRole("region", { name: "Pack at a glance" })).toContainText("3 wallets each bought $20 or more within 6 seconds. 3 more joined later (6 in total).");
+  await expect(page.getByRole("heading", { name: "How the pack formed" })).toBeVisible();
+  // Wallets that started the pack versus those that joined later, with every buy.
+  const wallets = page.getByRole("table", { name: "Pack wallets" });
+  await expect(wallets.getByText("Started it", { exact: true })).toHaveCount(3);
+  await expect(wallets.getByText("Joined later", { exact: true })).toHaveCount(3);
   await expect(page.getByText("synthetic").first()).toBeVisible();
   // Smart Money panel: token-wide buyers differ from confirmed members.
   await expect(page.getByText("at least").first()).toBeVisible();
@@ -57,8 +101,12 @@ test("radar → pack → wallet → back, then refresh keeps the stored pack", a
   await expect(page.getByText("Smart Money does not change pack detection, indicators, or ordering.")).toBeVisible();
   const url = page.url();
   // Wallet page from the member table.
-  await page.locator("table").first().locator("tbody tr").first().locator(".addr a").click();
+  await wallets.locator("tbody tr").first().locator(".addr a").click();
   await expect(page.getByRole("heading", { name: "Packs with this wallet" })).toBeVisible();
+  // The wallet page leads with plain answers and remembers which pack it came from.
+  await expect(page.getByRole("heading", { name: "This wallet at a glance" })).toBeVisible();
+  await expect(page.getByText("Does it sell quickly?")).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "Breadcrumb" })).toContainText("Lantern Moth");
   await page.goBack();
   await expect(page).toHaveURL(url);
   await page.reload();
@@ -69,10 +117,10 @@ test("data states are explicit: unavailable, update delayed, budget paused, obse
   await openPack(page, "Quiet Harbor");
   await expect(page.getByText("0 buyers observed in the checked data over 1 hour.")).toBeVisible();
   await expect(page.getByText("No holders were returned in the checked data.")).toBeVisible();
-  await expect(page.getByText("Analysis paused before the follow-up ran.").first()).toBeVisible();
+  await expect(page.getByText("Checks paused before the later balance check ran.").first()).toBeVisible();
   await expect(page.getByText(/Update delayed/).first()).toBeVisible();
   await page.goto("/");
-  await page.locator("article", { hasText: "Salt Meridian" }).filter({ hasText: "Analysis complete" }).getByRole("link").first().click();
+  await page.getByRole("row", { name: /Salt Meridian/ }).filter({ hasText: "Nansen checks done" }).getByRole("link").first().click();
   await expect(page.getByText("Token data is unavailable from this source. The pack is retained.")).toBeVisible();
   await expect(page.getByText(/At least 2 unique buyers observed over 1 hour; coverage is partial./)).toBeVisible();
 });
@@ -119,13 +167,23 @@ test("operator: login required, session cookie, overview, logout", async ({ page
   await expect(page.getByRole("heading", { name: "Operator login" })).toBeVisible();
 });
 
-test("radar cards show what happened after each pack", async ({ page }) => {
+test("radar rows and cards show what happened after each pack", async ({ page }) => {
   await page.goto("/");
+  const row = page.getByRole("row", { name: /Lantern Moth/ });
+  await expect(row).toContainText("4 of 6");
+  await expect(row.locator(".delta.down").first()).toBeVisible();
+  await expect(page.getByRole("row", { name: /Quiet Harbor/ })).toContainText("1 of 3");
+  // The card layout carries the same facts, and the choice is remembered.
+  await page.getByRole("group", { name: "Layout" }).getByRole("button", { name: "Cards" }).click();
   const card = page.locator("article", { hasText: "Lantern Moth" });
   await expect(card).toContainText("After the pack");
   await expect(card).toContainText("4 of 6 sold");
   await expect(card.locator(".delta.down").first()).toBeVisible();
   await expect(page.locator("article", { hasText: "Quiet Harbor" })).toContainText("1 of 3 sold");
+  await page.reload();
+  await expect(page.locator("article")).toHaveCount(5);
+  await page.getByRole("group", { name: "Layout" }).getByRole("button", { name: "Table" }).click();
+  await expect(page.locator("table.feed tbody tr")).toHaveCount(5);
 });
 
 test("pack page: plain-language reading, after-the-pack facts, chart, and earlier packs", async ({ page }) => {
@@ -133,6 +191,9 @@ test("pack page: plain-language reading, after-the-pack facts, chart, and earlie
   page.on("pageerror", (e) => errors.push(e.message));
   await openPack(page, "Lantern Moth");
   const reading = page.getByRole("region", { name: "Reading this pack" });
+  // The full written summary is folded under the glance.
+  await expect(reading.getByRole("heading", { name: "What happened" })).toBeHidden();
+  await reading.getByText("Read the full written summary").click();
   await expect(reading.getByRole("heading", { name: "What happened" })).toBeVisible();
   await expect(reading.getByRole("heading", { name: "Worth checking" })).toBeVisible();
   await expect(reading).toContainText("4 of 6 pack wallets have sold");
@@ -153,11 +214,54 @@ test("pack page: plain-language reading, after-the-pack facts, chart, and earlie
   await expect(page.getByRole("region", { name: "Earlier packs with these wallets" })).toContainText("No earlier packs with two or more of these wallets");
   // Salt Meridian's first pack shares two wallets with Lantern Moth.
   await page.goto("/");
-  await page.locator("article", { hasText: "Salt Meridian" }).filter({ hasText: "Analysis complete" }).getByRole("link").first().click();
+  await page.getByRole("row", { name: /Salt Meridian/ }).filter({ hasText: "Nansen checks done" }).getByRole("link").first().click();
   const earlier = page.getByRole("region", { name: "Earlier packs with these wallets" });
   await expect(earlier.getByRole("link", { name: "LMOTH" })).toBeVisible();
   await expect(earlier).toContainText("2 of 6");
   expect(errors).toEqual([]);
+});
+
+test("pack page answers the key questions at a glance, each linked to its evidence", async ({ page }) => {
+  await openPack(page, "Lantern Moth");
+  const glance = page.getByRole("region", { name: "Pack at a glance" });
+  await expect(glance.getByRole("link")).toHaveCount(6);
+  await expect(glance).toContainText("4 of 6 have sold");
+  await expect(glance).toContainText("2 of 6 pack wallets");
+  await expect(glance).toContainText("Not in the observed data");
+  await expect(glance).toContainText("not what the price will do next");
+  await glance.getByRole("link", { name: /Are the pack wallets still holding/ }).click();
+  await expect(page).toHaveURL(/#sec-after$/);
+});
+
+test("radar explains what a pack is, rows say whether the group sold, and the explainer can be reopened", async ({ page }) => {
+  await page.goto("/");
+  const how = page.getByRole("region", { name: "How Pack Radar works" });
+  await expect(how).toContainText("3 or more different wallets");
+  await expect(how).toContainText("not a buy signal");
+  await expect(page.getByRole("row", { name: /Lantern Moth/ })).toContainText("4 of 6 sold");
+  await how.getByRole("button", { name: "Hide this guide suggestion" }).click();
+  await expect(how).toHaveCount(0);
+  await page.getByRole("button", { name: "How it works" }).click();
+  await expect(page.getByRole("region", { name: "How Pack Radar works" })).toBeVisible();
+});
+
+test("top bar search finds a token by name and opens it", async ({ page }) => {
+  await page.goto("/");
+  const search = page.getByRole("combobox", { name: "Search tokens and wallets" });
+  await search.fill("moth");
+  await expect(page.getByRole("option", { name: /Lantern Moth/ })).toBeVisible();
+  await search.press("Enter");
+  await expect(page.getByRole("heading", { level: 1 })).toContainText("Lantern Moth");
+  await expect(page.getByRole("heading", { name: "Packs on this token" })).toBeVisible();
+  await search.fill("zzzz-no-such-token");
+  await expect(page.getByText(/No token with a pack matches/)).toBeVisible();
+});
+
+test("a link to a pack section lands on that section", async ({ page }) => {
+  const list = await (await page.request.get("/api/packs?limit=50")).json();
+  const moth = list.data.items.find((i: { token: { symbol: string } }) => i.token.symbol === "LMOTH");
+  await page.goto(`/packs/${moth.core.id}#sec-earlier`);
+  await expect(page.getByRole("heading", { name: /Earlier packs with these wallets/ })).toBeInViewport();
 });
 
 test("graduated token is labeled and the note explains the missing trades", async ({ page }) => {
@@ -168,7 +272,7 @@ test("graduated token is labeled and the note explains the missing trades", asyn
 
 test("info tips explain terms on hover, focus, and click, and close with Escape", async ({ page }) => {
   await openPack(page, "Lantern Moth");
-  const tip = page.getByRole("button", { name: "What is Entry spread?" }).first();
+  const tip = page.getByRole("button", { name: "What is Entry window?" }).first();
   await tip.click();
   await expect(page.getByRole("tooltip")).toContainText("Time between the first and the last buy");
   await page.keyboard.press("Escape");
@@ -177,25 +281,25 @@ test("info tips explain terms on hover, focus, and click, and close with Escape"
 
 test("guide: reachable from the top bar and the radar, and the radar hint can be dismissed", async ({ page }) => {
   await page.goto("/");
-  await page.getByRole("link", { name: "Read the 3-minute guide" }).click();
-  await expect(page.getByRole("heading", { level: 1 })).toContainText("How to read PackLens");
+  await page.getByRole("link", { name: "Read the short guide" }).click();
+  await expect(page.getByRole("heading", { level: 1 })).toContainText("How to read Degentellegence");
   await expect(page.getByRole("heading", { name: "Seven questions before you act" })).toBeVisible();
   await expect(page.getByText("Research tool. Not trading advice.").first()).toBeVisible();
-  await expect(page.getByRole("term").filter({ hasText: "Entry spread" })).toBeVisible();
+  await expect(page.getByRole("term").filter({ hasText: "Entry window" })).toBeVisible();
   await page.goto("/");
   await page.getByRole("button", { name: "Hide this guide suggestion" }).click();
-  await expect(page.getByRole("link", { name: "Read the 3-minute guide" })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Read the short guide" })).toHaveCount(0);
   await page.reload();
   await expect(page.getByRole("heading", { level: 1 })).toContainText("Pack Radar");
-  await expect(page.getByRole("link", { name: "Read the 3-minute guide" })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Read the short guide" })).toHaveCount(0);
   await page.getByRole("navigation").getByRole("link", { name: "Guide", exact: true }).click();
-  await expect(page.getByRole("heading", { level: 1 })).toContainText("How to read PackLens");
+  await expect(page.getByRole("heading", { level: 1 })).toContainText("How to read Degentellegence");
 });
 
 test("360 px: guide and after-the-pack section fit without horizontal scroll", async ({ browser }) => {
   const page = await browser.newPage({ viewport: { width: 360, height: 780 } });
   await page.goto("/guide");
-  await expect(page.getByRole("heading", { level: 1 })).toContainText("How to read PackLens");
+  await expect(page.getByRole("heading", { level: 1 })).toContainText("How to read Degentellegence");
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.goto("/");
   await page.getByRole("link", { name: /Lantern Moth/ }).first().click();

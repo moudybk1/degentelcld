@@ -1,10 +1,14 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { Link } from "react-router";
 import { ArrowUpRight, Check, Copy, Info, WarningCircle } from "@phosphor-icons/react";
 import type { Mode } from "@packlens/contracts";
 import { shortAddr } from "../lib/format";
 import { avatarTone } from "../lib/explorer";
 
 export type Tone = "gray" | "red" | "blue" | "green" | "yellow" | "outline";
+
+/** Router state for breadcrumbs: the page the reader came from. */
+export type FromState = { from?: { label: string; href: string } };
 
 export function Tag({ tone = "gray", children, dot, pulse, title }: { tone?: Tone; children: ReactNode; dot?: boolean; pulse?: boolean; title?: string }) {
   return (
@@ -19,7 +23,7 @@ export function ModeBadge({ mode }: { mode: Mode | null | undefined }) {
   if (!mode) return null;
   if (mode === "live") return <Tag tone="green" dot pulse title="Live data from the pump.fun stream and Nansen">Live</Tag>;
   if (mode === "replay") return <Tag tone="yellow" dot title="Replay of a recorded dataset with its original times">Replay</Tag>;
-  return <Tag tone="blue" dot title="Synthetic fixture data for offline use; not market observations">Fixture</Tag>;
+  return <Tag tone="blue" dot title="Synthetic fixture data for offline use; not market observations">Example</Tag>;
 }
 
 /** Fade-up entry on scroll into view (IntersectionObserver, transform/opacity only). */
@@ -112,12 +116,12 @@ export function CopyButton({ value, label }: { value: string; label: string }) {
   );
 }
 
-/** Short address with a full-address copy control and an optional explorer link. */
-export function Address({ value, href, external, head = 4, tail = 4, copyLabel = "Copy full address" }: { value: string; href?: string | null; external?: string | null; head?: number; tail?: number; copyLabel?: string }) {
+/** Short address with a full-address copy control and an optional explorer link. In-app links navigate without a page reload and can carry where the reader came from. */
+export function Address({ value, href, external, head = 4, tail = 4, copyLabel = "Copy full address", state }: { value: string; href?: string | null; external?: string | null; head?: number; tail?: number; copyLabel?: string; state?: FromState }) {
   const short = shortAddr(value, head, tail);
   return (
     <span className="addr" title={value}>
-      {href ? <a href={href}>{short}</a> : <span>{short}</span>}
+      {href ? href.startsWith("/") ? <Link to={href} state={state}>{short}</Link> : <a href={href}>{short}</a> : <span>{short}</span>}
       <CopyButton value={value} label={copyLabel} />
       {external && (
         <a className="icon-btn" href={external} target="_blank" rel="noopener noreferrer" aria-label="Open in explorer (new tab)" title="Open in explorer">
@@ -139,12 +143,15 @@ export function ExtLink({ href, children }: { href: string | null; children: Rea
   );
 }
 
-export function TokenAvatar({ mint, symbol, name, large }: { mint: string; symbol: string | null; name: string | null; large?: boolean }) {
+/** Token logo when one is stored; otherwise (or if it fails to load) a monogram in a stable tone. */
+export function TokenAvatar({ mint, symbol, name, image, large }: { mint: string; symbol: string | null; name: string | null; image?: string | null; large?: boolean }) {
   const tone = avatarTone(mint);
   const letter = (symbol ?? name ?? mint).replace(/[^A-Za-z0-9]/g, "").slice(0, 1).toUpperCase() || "?";
+  const [failed, setFailed] = useState<string | null>(null);
+  const showImage = !!image && failed !== image;
   return (
-    <span className={`token-avatar${large ? " lg" : ""}`} style={{ background: tone.bg, color: tone.fg }} aria-hidden="true">
-      {letter}
+    <span className={`token-avatar${large ? " lg" : ""}${showImage ? " has-img" : ""}`} style={{ background: tone.bg, color: tone.fg }} aria-hidden="true">
+      {showImage ? <img src={image} alt="" loading="lazy" decoding="async" draggable={false} onError={() => setFailed(image)} /> : letter}
     </span>
   );
 }

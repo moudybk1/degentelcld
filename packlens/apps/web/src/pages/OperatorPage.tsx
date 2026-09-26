@@ -40,7 +40,7 @@ function Login({ onDone, configured }: { onDone: () => void; configured: boolean
         <label htmlFor="op-token">Operator token</label>
         <input id="op-token" className="input mono" type="password" autoComplete="current-password" value={token} onChange={(e) => setToken(e.target.value)} required />
       </div>
-      <p className="tiny muted">The token is sent once and exchanged for a one-hour HttpOnly session cookie. It is never stored in this browser.</p>
+      <p className="tiny muted">The token is sent once and exchanged for an HttpOnly session cookie that lasts one hour. It is never stored in this browser.</p>
       {error && (
         <div style={{ marginBottom: 12 }}>
           <Note tone="red" icon="warn">{error}</Note>
@@ -108,9 +108,7 @@ export function OperatorPage() {
               <div className="eyebrow">Operator</div>
               <ModeBadge mode={(mode as "live" | "fixture" | "replay" | null) ?? undefined} />
             </div>
-            <h1 className="display">
-              Sessions, credits <em>and replay.</em>
-            </h1>
+            <h1 className="display">Sessions, credits and replay</h1>
             <p className="lede">Operational controls live here, apart from the research views. Only an authenticated operator can start work that spends credits.</p>
           </div>
           {me.authenticated && (
@@ -147,8 +145,8 @@ export function OperatorPage() {
                     {data.session.active ? <Tag tone="green" dot pulse>Active</Tag> : <Tag tone="outline">Inactive</Tag>}
                   </div>
                   <div className="stack" style={{ gap: 8 }}>
-                    <KV k="Ends">{data.session.endsAt ? `${dateTimeUtc(data.session.endsAt)} (${relative(data.session.endsAt, now)})` : "—"}</KV>
-                    <KV k="Smart Money ends">{data.session.smartMoneyEndsAt ? dateTimeUtc(data.session.smartMoneyEndsAt) : "—"}</KV>
+                    <KV k="Ends">{data.session.endsAt ? `${dateTimeUtc(data.session.endsAt)} (${relative(data.session.endsAt, now)})` : "n/a"}</KV>
+                    <KV k="Smart Money ends">{data.session.smartMoneyEndsAt ? dateTimeUtc(data.session.smartMoneyEndsAt) : "n/a"}</KV>
                     <KV k="Configured maximum">{data.session.configuredMaxEnd ? dateTimeUtc(data.session.configuredMaxEnd) : "Not set"}</KV>
                   </div>
                   {mode === "live" ? (
@@ -189,7 +187,7 @@ export function OperatorPage() {
                     <div className="span-3"><Stat label="Actual (settled)" value={int(data.usage.credits.settled)} /></div>
                     <div className="span-3"><Stat label="Reserved" value={int(data.usage.credits.reserved)} /></div>
                     <div className="span-3"><Stat label="Unresolved" value={int(data.usage.credits.unresolved)} note="Unknown cost; kept until reconciled" /></div>
-                    <div className="span-3"><Stat label="Available" value={data.usage.credits.available === null ? "—" : int(data.usage.credits.available)} note={`Price reserve ${data.usage.credits.priceReserve}`} /></div>
+                    <div className="span-3"><Stat label="Available" value={data.usage.credits.available === null ? "n/a" : int(data.usage.credits.available)} note={`Price reserve ${data.usage.credits.priceReserve}`} /></div>
                   </div>
                   <p className="tiny muted" style={{ margin: "14px 0 0" }}>
                     Account balance last reported by Nansen: {data.usage.credits.lastReportedRemaining === null ? "not reported yet" : int(data.usage.credits.lastReportedRemaining)}. The budget limits credits, never the number of calls.
@@ -209,7 +207,7 @@ export function OperatorPage() {
               <div className="bento">
                 <div className="card span-3"><Stat label="Attempts" value={int(data.usage.attempts.total)} note="Every attempt, retry, and page" serif /></div>
                 <div className="card span-3"><Stat label="Successful HTTP" value={int(data.usage.attempts.httpSuccess)} note={`${int(data.usage.attempts.httpFailed)} failed`} serif /></div>
-                <div className="card span-3"><Stat label="Schema-valid results" value={int(data.usage.attempts.schemaValid)} note={`${int(data.usage.attempts.schemaInvalid)} schema errors`} serif /></div>
+                <div className="card span-3"><Stat label="Passed schema check" value={int(data.usage.attempts.schemaValid)} note={`${int(data.usage.attempts.schemaInvalid)} schema errors`} serif /></div>
                 <div className="card span-3">
                   <Stat
                     label="Toward the 100-call target"
@@ -268,10 +266,10 @@ export function OperatorPage() {
                           <td className="mono small">{timeUtc(r.startedAt)}</td>
                           <td className="mono small">{r.endpoint}</td>
                           <td className="small">{r.purpose.replace(/_/g, " ")}{r.retryOfAttemptId ? " (retry)" : ""}</td>
-                          <td className="mono small">{r.subjectId ? shortAddr(r.subjectId) : "—"}</td>
-                          <td className="num">{r.httpStatus ?? "—"}</td>
+                          <td className="mono small">{r.subjectId ? shortAddr(r.subjectId) : "n/a"}</td>
+                          <td className="num">{r.httpStatus ?? "n/a"}</td>
                           <td className="small">{r.normalizationStatus === "ok" ? "Valid" : r.normalizationStatus.replace(/_/g, " ")}</td>
-                          <td className="num">{r.actualCredits ?? (r.quotedCredits !== null ? `~${r.quotedCredits}` : "—")}</td>
+                          <td className="num">{r.actualCredits ?? (r.quotedCredits !== null ? `~${r.quotedCredits}` : "n/a")}</td>
                           <td className="small">{r.reservationStatus}</td>
                         </tr>
                       ))}
@@ -293,7 +291,7 @@ export function OperatorPage() {
                     <KV k="Health">{data.status.collector.health}</KV>
                     <KV k="Decoder">{data.status.decoderVersion}</KV>
                     <KV k="Config">{data.config.configVersion}</KV>
-                    <KV k="Last message">{data.status.collector.lastMessageAt ? relative(data.status.collector.lastMessageAt, now) : "—"}</KV>
+                    <KV k="Last message">{data.status.collector.lastMessageAt ? relative(data.status.collector.lastMessageAt, now) : "n/a"}</KV>
                     <KV k="Reconnects">{data.status.collector.reconnects}</KV>
                     <KV k="Notifications / failed tx">
                       {int(data.status.counters.notifications)} / {int(data.status.counters.failedTransactions)}
@@ -405,7 +403,7 @@ export function OperatorPage() {
                           · {r.mode}
                         </span>
                         <span className="v mono tiny" title={r.resultHash ?? ""}>
-                          digest {r.resultHash?.slice(0, 12) ?? "—"}
+                          digest {r.resultHash?.slice(0, 12) ?? "n/a"}
                         </span>
                       </div>
                     ))}

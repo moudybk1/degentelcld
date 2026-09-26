@@ -8,10 +8,10 @@ import { shortAddr, timeUtc } from "../lib/format";
  * (down-triangle). One axis, hairline grid, crosshair tooltip with keyboard
  * support, selective direct labels, and a table-view twin.
  */
-const INK = "#2F3437";
-const BUY = "#2a78d6"; // categorical slot 1 (validated with slot 2)
-const SELL = "#eb6834"; // categorical slot 2
-const GRID = "#EAEAEA";
+const INK = "#4B1015";
+const BUY = "#D71920"; // brand signal red: pack buys are the focus
+const SELL = "#1F5F8F"; // distinct hue and shape (triangle) for sells
+const GRID = "#F0E6E6";
 const SURFACE = "#FFFFFF";
 
 function niceStep(range: number, target = 4): number {
@@ -20,6 +20,12 @@ function niceStep(range: number, target = 4): number {
   const n = raw / pow;
   return (n <= 1 ? 1 : n <= 2 ? 2 : n <= 2.5 ? 2.5 : n <= 5 ? 5 : 10) * pow;
 }
+
+const ZOOMS: { label: string; ms: number | null }[] = [
+  { label: "First 2 min", ms: 120_000 },
+  { label: "First 15 min", ms: 900_000 },
+  { label: "All", ms: null },
+];
 
 export function signed(p: number): string {
   const r = Math.abs(p) >= 100 ? Math.round(p) : Math.round(p * 10) / 10;
@@ -41,6 +47,13 @@ export function AfterChart({
   const wrap = useRef<HTMLDivElement | null>(null);
   const [width, setWidth] = useState(760);
   const [hover, setHover] = useState<number | null>(null);
+  // Most moves happen in the first seconds; a long tail would squeeze them into a sliver.
+  const spanMs = (series[series.length - 1]?.t ?? triggerMs) - triggerMs;
+  const zooms = ZOOMS.filter((z) => z.ms === null || spanMs > z.ms * 1.5);
+  const [zoom, setZoom] = useState<number | null>(() => (spanMs > 4 * 60_000 ? 120_000 : null));
+  const limit = zoom === null ? Infinity : triggerMs + zoom;
+  const view = zoom === null ? series : series.filter((p) => p.t <= limit);
+  const viewMarkers = zoom === null ? markers : markers.filter((p) => p.t <= limit);
 
   useEffect(() => {
     const el = wrap.current;
@@ -59,8 +72,8 @@ export function AfterChart({
   const ih = height - m.top - m.bottom;
 
   const geo = useMemo(() => {
-    const ts = [...series.map((p) => p.t), ...markers.map((p) => p.t), triggerMs];
-    const ys = [...series.map((p) => p.changePct), ...markers.map((p) => p.changePct), 0];
+    const ts = [...view.map((p) => p.t), ...viewMarkers.map((p) => p.t), triggerMs];
+    const ys = [...view.map((p) => p.changePct), ...viewMarkers.map((p) => p.changePct), 0];
     const t0 = Math.min(...ts);
     const t1 = Math.max(...ts, t0 + 1000);
     let y0 = Math.min(...ys);
@@ -78,20 +91,21 @@ export function AfterChart({
     const n = width < 520 ? 3 : 5;
     for (let i = 0; i <= n; i++) xTicks.push(t0 + ((t1 - t0) * i) / n);
     return { t0, t1, y0, y1, yTicks, xTicks };
-  }, [series, markers, triggerMs, width]);
+  }, [view, viewMarkers, triggerMs, width]);
 
   const x = (t: number) => m.left + ((t - geo.t0) / (geo.t1 - geo.t0)) * iw;
   const y = (v: number) => m.top + (1 - (v - geo.y0) / (geo.y1 - geo.y0)) * ih;
-  const path = series.map((p, i) => `${i === 0 ? "M" : "L"}${x(p.t).toFixed(1)},${y(p.changePct).toFixed(1)}`).join("");
-  const last = series[series.length - 1];
-  const peak = truePeak
-    ? { t: Date.parse(truePeak.at), changePct: truePeak.changePct }
-    : series.reduce<AfterPackPoint | null>((a, p) => (p.t > triggerMs && (!a || p.changePct > a.changePct) ? p : a), null);
+  const path = view.map((p, i) => `${i === 0 ? "M" : "L"}${x(p.t).toFixed(1)},${y(p.changePct).toFixed(1)}`).join("");
+  const last = view[view.length - 1];
+  const peakAll = truePeak ? { t: Date.parse(truePeak.at), changePct: truePeak.changePct } : null;
+  const peak = peakAll && peakAll.t <= limit
+    ? peakAll
+    : view.reduce<AfterPackPoint | null>((a, p) => (p.t > triggerMs && (!a || p.changePct > a.changePct) ? p : a), null);
 
   const nearest = (px: number) => {
     let best = 0;
     let bd = Infinity;
-    series.forEach((p, i) => {
+    view.forEach((p, i) => {
       const d = Math.abs(x(p.t) - px);
       if (d < bd) {
         bd = d;
@@ -100,15 +114,24 @@ export function AfterChart({
     });
     return best;
   };
-  const hp = hover !== null ? series[hover] : null;
-  const bucketMs = series.length > 1 ? (geo.t1 - geo.t0) / Math.max(1, series.length) : 2000;
-  const near = hp ? markers.filter((mk) => Math.abs(mk.t - hp.t) <= Math.max(1000, bucketMs)) : [];
+  const hp = hover !== null ? view[hover] : null;
+  const bucketMs = view.length > 1 ? (geo.t1 - geo.t0) / Math.max(1, view.length) : 2000;
+  const near = hp ? viewMarkers.filter((mk) => Math.abs(mk.t - hp.t) <= Math.max(1000, bucketMs)) : [];
   const tipLeft = hp ? Math.min(Math.max(x(hp.t) + 12, 8), width - 250) : 0;
 
   const tri = (cx: number, cy: number, r: number) => `${cx - r},${cy - r * 0.75} ${cx + r},${cy - r * 0.75} ${cx},${cy + r}`;
 
   return (
     <div>
+      {zooms.length > 1 && (
+        <div className="seg chart-zoom" role="group" aria-label="Time shown">
+          {zooms.map((z) => (
+            <button key={z.label} type="button" aria-pressed={zoom === z.ms} className={zoom === z.ms ? "on" : ""} onClick={() => setZoom(z.ms)}>
+              {z.label}
+            </button>
+          ))}
+        </div>
+      )}
       <div className="chart-legend" aria-hidden="true">
         <span>
           <svg width="18" height="10"><line x1="1" y1="5" x2="17" y2="5" stroke={INK} strokeWidth="2" strokeLinecap="round" /></svg>
@@ -130,16 +153,16 @@ export function AfterChart({
           viewBox={`0 0 ${width} ${height}`}
           role="img"
           tabIndex={0}
-          aria-label={`Price after the pack. Latest ${last ? signed(last.changePct) : "not available"} versus the pack's average entry${peak ? `, peak ${signed(peak.changePct)}` : ""}. Use the arrow keys to read points.`}
+          aria-label={`Price after the pack. ${zoom === null ? "Latest" : "At the end of the period shown"} ${last ? signed(last.changePct) : "not available"} versus the pack's average entry${peak ? `, peak ${signed(peak.changePct)}` : ""}. Use the arrow keys to read points.`}
           onPointerMove={(e) => {
             const r = (e.currentTarget as SVGSVGElement).getBoundingClientRect();
             setHover(nearest(e.clientX - r.left));
           }}
           onPointerLeave={() => setHover(null)}
           onKeyDown={(e) => {
-            if (series.length === 0) return;
-            if (e.key === "ArrowRight") setHover((h) => Math.min(series.length - 1, (h ?? -1) + 1));
-            else if (e.key === "ArrowLeft") setHover((h) => Math.max(0, (h ?? series.length) - 1));
+            if (view.length === 0) return;
+            if (e.key === "ArrowRight") setHover((h) => Math.min(view.length - 1, (h ?? -1) + 1));
+            else if (e.key === "ArrowLeft") setHover((h) => Math.max(0, (h ?? view.length) - 1));
             else if (e.key === "Escape") setHover(null);
             else return;
             e.preventDefault();
@@ -148,8 +171,8 @@ export function AfterChart({
         >
           {geo.yTicks.map((v) => (
             <g key={v}>
-              <line x1={m.left} x2={m.left + iw} y1={y(v)} y2={y(v)} stroke={v === 0 ? "#C9C7C0" : GRID} strokeWidth="1" />
-              <text x={m.left - 8} y={y(v) + 4} textAnchor="end" fontSize="11" fill="#9B9A97" style={{ fontVariantNumeric: "tabular-nums" }}>
+              <line x1={m.left} x2={m.left + iw} y1={y(v)} y2={y(v)} stroke={v === 0 ? "#E0CFD0" : GRID} strokeWidth="1" />
+              <text x={m.left - 8} y={y(v) + 4} textAnchor="end" fontSize="11" fill="#A98386" style={{ fontVariantNumeric: "tabular-nums" }}>
                 {v === 0 ? "0%" : signed(v)}
               </text>
             </g>
@@ -159,7 +182,7 @@ export function AfterChart({
             y={last && Math.abs(y(last.changePct) - y(0)) < 18 && y(last.changePct) <= y(0) ? y(0) + 15 : y(0) - 6}
             textAnchor="end"
             fontSize="11"
-            fill="#787774"
+            fill="#7C484C"
             stroke={SURFACE}
             strokeWidth="3"
             paintOrder="stroke"
@@ -167,19 +190,19 @@ export function AfterChart({
             Pack entry
           </text>
           {geo.xTicks.map((t, i) => (
-            <text key={i} x={x(t)} y={height - 8} textAnchor={i === 0 ? "start" : i === geo.xTicks.length - 1 ? "end" : "middle"} fontSize="11" fill="#9B9A97" style={{ fontVariantNumeric: "tabular-nums" }}>
+            <text key={i} x={x(t)} y={height - 8} textAnchor={i === 0 ? "start" : i === geo.xTicks.length - 1 ? "end" : "middle"} fontSize="11" fill="#A98386" style={{ fontVariantNumeric: "tabular-nums" }}>
               {timeUtc(t).replace(" UTC", "")}
             </text>
           ))}
-          <line x1={x(triggerMs)} x2={x(triggerMs)} y1={m.top} y2={m.top + ih} stroke="#9B9A97" strokeWidth="1" />
-          <text x={x(triggerMs) + 5} y={m.top - 8} fontSize="11" fill="#787774">
+          <line x1={x(triggerMs)} x2={x(triggerMs)} y1={m.top} y2={m.top + ih} stroke="#A98386" strokeWidth="1" />
+          <text x={x(triggerMs) + 5} y={m.top - 8} fontSize="11" fill="#7C484C">
             Pack formed
           </text>
           <path d={path} fill="none" stroke={INK} strokeWidth="2" strokeLinejoin="round" strokeLinecap="round" />
-          {markers.filter((mk) => mk.kind === "pack_buy").map((mk, i) => (
+          {viewMarkers.filter((mk) => mk.kind === "pack_buy").map((mk, i) => (
             <circle key={`b${i}`} cx={x(mk.t)} cy={y(mk.changePct)} r="4.5" fill={BUY} stroke={SURFACE} strokeWidth="2" />
           ))}
-          {markers.filter((mk) => mk.kind === "member_sell").map((mk, i) => (
+          {viewMarkers.filter((mk) => mk.kind === "member_sell").map((mk, i) => (
             <polygon key={`s${i}`} points={tri(x(mk.t), y(mk.changePct), 5.5)} fill={SELL} stroke={SURFACE} strokeWidth="1.5" strokeLinejoin="round" />
           ))}
           {peak && last && !(peak.t === last.t && Math.abs(peak.changePct - last.changePct) < 0.05) && (
@@ -188,7 +211,7 @@ export function AfterChart({
               y={Math.max(y(peak.changePct) - 10, m.top + 10)}
               textAnchor="middle"
               fontSize="11.5"
-              fill="#2F3437"
+              fill="#4B1015"
               fontWeight="600"
               stroke={SURFACE}
               strokeWidth="3"
@@ -200,14 +223,14 @@ export function AfterChart({
           {last && (
             <>
               <circle cx={x(last.t)} cy={y(last.changePct)} r="4" fill={INK} stroke={SURFACE} strokeWidth="2" />
-              <text x={x(last.t) + 8} y={y(last.changePct) + 4} fontSize="11.5" fill="#111111" fontWeight="600">
+              <text x={x(last.t) + 8} y={y(last.changePct) + 4} fontSize="11.5" fill="#4B1015" fontWeight="600">
                 {signed(last.changePct)}
               </text>
             </>
           )}
           {hp && (
             <g pointerEvents="none">
-              <line x1={x(hp.t)} x2={x(hp.t)} y1={m.top} y2={m.top + ih} stroke="#111111" strokeWidth="1" opacity="0.35" />
+              <line x1={x(hp.t)} x2={x(hp.t)} y1={m.top} y2={m.top + ih} stroke="#4B1015" strokeWidth="1" opacity="0.35" />
               <circle cx={x(hp.t)} cy={y(hp.changePct)} r="4.5" fill={INK} stroke={SURFACE} strokeWidth="2" />
             </g>
           )}

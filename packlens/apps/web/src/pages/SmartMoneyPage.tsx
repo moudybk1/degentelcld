@@ -41,13 +41,11 @@ export function SmartMoneyPage() {
         <div className="page-head">
           <div>
             <div className="row" style={{ gap: 8 }}>
-              <div className="eyebrow">Nansen Smart Money · Solana DEX trades</div>
+              <div className="eyebrow">Nansen Smart Money · Solana trades</div>
               <ModeBadge mode={meta?.mode} />
             </div>
-            <h1 className="display">
-              Smart Money <em>activity.</em>
-            </h1>
-            <p className="lede">Observations from the Smart Money endpoint, shared by every viewer. They add context to tokens; they never create or change packs.</p>
+            <h1 className="display">Smart Money activity</h1>
+            <p className="lede">Recent trades by wallets that Nansen labels Smart Money. They add context to a token; they never create or change packs.</p>
           </div>
         </div>
       </Reveal>
@@ -55,8 +53,8 @@ export function SmartMoneyPage() {
       <div className="section" style={{ marginTop: 32 }}>
         {data && (
           <div className="stack" style={{ gap: 10, marginBottom: 16 }}>
-            <PanelStatus state={data.state} source="Nansen smart-money/dex-trades" />
-            <Note>{data.scopeDescription} A wallet that appears here is not a pack member unless its pack transaction matches.</Note>
+            <PanelStatus state={data.state} source="Nansen Smart Money trades" />
+            <Note>This is a sample of the latest trades, not every Smart Money trade. A wallet listed here is not a pack member unless its own pack transaction matches.</Note>
           </div>
         )}
         <ErrorNote error={error} what="Smart Money activity" />
@@ -80,7 +78,7 @@ export function SmartMoneyPage() {
                   <th scope="col">Trader</th>
                   <th scope="col" className="num">Token amount</th>
                   <th scope="col" className="num">Value</th>
-                  <th scope="col">Scope</th>
+                  <th scope="col">Found in</th>
                   <th scope="col">Pack</th>
                 </tr>
               </thead>
@@ -106,7 +104,7 @@ export function SmartMoneyPage() {
                     </td>
                     <td className="num">{decimal(r.tokenAmount, 2)}</td>
                     <td className="num">{r.tradeValueUsd ? usd(r.tradeValueUsd) : <span className="muted">No USD value</span>}</td>
-                    <td className="small muted">{r.scope}</td>
+                    <td className="small muted">{r.scope === "Global feed" ? "Latest trades" : r.scope === "Token lookup" ? "Token lookup" : r.scope}</td>
                     <td>{r.hasPack ? <Tag tone="blue">Pack exists</Tag> : <span className="small muted">No pack</span>}</td>
                   </tr>
                 ))}

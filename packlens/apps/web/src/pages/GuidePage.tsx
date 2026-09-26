@@ -26,7 +26,7 @@ const EXAMPLE: PackListItem = {
     coreVersion: 3,
     evidenceVersion: 2,
   },
-  token: { chain: "solana", mint: "Examp1eMint111111111111111111111111111pump", name: "Example Token", symbol: "EXMPL", identitySource: "pumpfun_create_event" },
+  token: { chain: "solana", mint: "Examp1eMint111111111111111111111111111pump", name: "Example Token", symbol: "EXMPL", identitySource: "pumpfun_create_event", imageUrl: null },
   patterns: {
     formulaVersion: "patterns-v1",
     initialEntrySpanMs: 6000,
@@ -58,13 +58,13 @@ const EXAMPLE: PackListItem = {
 };
 
 const QUESTIONS: { q: string; a: string; where: string }[] = [
-  { q: "Has the price already moved?", a: "Compare “now” with “peak”. A pack that already ran far above its entry is a different situation from one still near its entry.", where: "Card: After the pack · Page: After the pack" },
-  { q: "Are the pack wallets still holding?", a: "If most pack wallets have sold, the group that created the signal has left. “Holding” wallets have not sold in the observed trades.", where: "Page: Pack wallets sold, and the per-wallet table" },
-  { q: "Is it really a group, or one buyer?", a: "A high largest-buyer share or near-identical buy sizes mean the pack may be one actor. Check the evidence rows.", where: "Page: Pattern indicators, Members and evidence" },
-  { q: "Has this group done it before, and what happened then?", a: "Earlier packs with the same wallets show how those tokens moved in the next 15 minutes. It is history, not a prediction.", where: "Page: Earlier packs with these wallets" },
-  { q: "Is buying continuing?", a: "Buys vs sells and net SOL since the pack formed show whether new money kept arriving or the token is being sold into.", where: "Page: Activity since the pack" },
-  { q: "Is Smart Money in the pack, or only near the token?", a: "“Confirmed” pack wallets matched their own pack transaction. Smart Money buyers on the token may be anyone.", where: "Card and page: the two Smart Money lines" },
-  { q: "What don't we know?", a: "“Not checked”, “Partial”, gaps, and “Not analyzed yet” all mean missing information, never zero or safe.", where: "Page: Reading this pack → Not known, and Coverage" },
+  { q: "Has the price already moved?", a: "Compare “now” with “peak”. A pack that already ran far above its entry is a different situation from one still near its entry.", where: "Radar: Price vs entry, Peak since · Pack page: After the pack" },
+  { q: "Are the pack wallets still holding?", a: "If most pack wallets have sold, the group that created the signal has left. “Holding” wallets have not sold in the observed trades.", where: "Radar: Group sold · Pack page: at a glance, After the pack" },
+  { q: "Is it really a group, or one buyer?", a: "A high largest buyer share or nearly identical buy sizes mean the pack may be one actor. Check the evidence rows.", where: "Radar: flags · Pack page: at a glance, Wallets and transactions" },
+  { q: "Has this group done it before, and what happened then?", a: "Earlier packs with the same wallets show how those tokens moved in the next 15 minutes. It is history, not a prediction.", where: "Pack page: Earlier packs with these wallets" },
+  { q: "Is buying continuing?", a: "Buys vs sells and net SOL since the pack formed show whether new money kept arriving or the token is being sold into.", where: "Pack page: After the pack" },
+  { q: "Is Smart Money in the pack, or only near the token?", a: "“Confirmed” pack wallets matched their own pack transaction. Smart Money buyers on the token may be anyone.", where: "Pack page: at a glance, Smart Money" },
+  { q: "What don't we know?", a: "“Not checked yet”, “Partial”, and stream disconnects all mean missing information, never zero or safe.", where: "Pack page: the full written summary, and Technical details" },
 ];
 
 export function GuidePage() {
@@ -74,14 +74,14 @@ export function GuidePage() {
       <Reveal>
         <div className="eyebrow">Guide</div>
         <h1 className="display">
-          How to read PackLens <em>— in three minutes.</em>
+          How to read Degentellegence <em>in three minutes</em>
         </h1>
         <p className="lede">
-          PackLens shows what happened, with evidence: groups of wallets buying the same pump.fun token at almost the same time, what they did next, and what Nansen knows about them. It does not tell you what will happen next.
+          Degentellegence shows what happened, with evidence: groups of wallets buying the same pump.fun token at almost the same time, what they did next, and what Nansen knows about them. It does not tell you what will happen next.
         </p>
         <nav className="guide-toc" aria-label="Guide sections">
           <a href="#g-rule">The one rule</a>
-          <a href="#g-card">Reading a card</a>
+          <a href="#g-card">Reading the radar</a>
           <a href="#g-page">Reading a pack page</a>
           <a href="#g-questions">Before you act</a>
           <a href="#g-sm">Smart Money</a>
@@ -119,38 +119,38 @@ export function GuidePage() {
 
       <section className="section" id="g-card" aria-labelledby="g-card-h">
         <h2 className="h2" id="g-card-h" style={{ marginBottom: 18 }}>
-          Reading a pack card
+          Reading the Pack Radar
         </h2>
         <div className="bento">
+          <div className="span-6">
+            <ol className="callouts">
+              <li>
+                <strong>Each row is one pack:</strong> 3 or more different wallets that each bought at least $20 of the same token within 20 seconds. <em>Forming</em> means it can still gain wallets; otherwise the list is final.
+              </li>
+              <li>
+                <strong>Wallets, Pack buys, Entry window.</strong> How many wallets, how much they bought together, and how close together the first ones bought. <em>Same second</em> means they landed at once.
+              </li>
+              <li>
+                <strong>Price vs entry and Peak since.</strong> The latest trade and the highest trade since the pack, compared with the average price the group paid.
+              </li>
+              <li>
+                <strong>Group sold.</strong> <em>None sold</em>, <em>3 of 8 sold</em>, or <em>All 8 sold</em>: whether the pack's own wallets have already sold some of the token.
+              </li>
+              <li>
+                <strong>Flags.</strong> Uncommon facts worth a look, such as one wallet making half the buying or near equal buy sizes.
+              </li>
+              <li>
+                <strong>Smart Money.</strong> Shown once Nansen has been checked for those packs. Not checked is different from none.
+              </li>
+            </ol>
+          </div>
           <div className="span-6">
             <div inert aria-hidden="true">
               <PackCard item={EXAMPLE} now={now} />
             </div>
             <p className="tiny muted" style={{ marginTop: 8 }}>
-              Example card with invented numbers.
+              The same facts in the card layout (switch with Table and Cards above the list). Invented numbers.
             </p>
-          </div>
-          <div className="span-6">
-            <ol className="callouts">
-              <li>
-                <strong>Token and state.</strong> Name, symbol, and copyable address. <em>Collecting</em> means the pack can still gain wallets; <em>Frozen</em> means it is final.
-              </li>
-              <li>
-                <strong>6 wallets, $529.88, 6 s.</strong> Six distinct addresses bought (3 started it, 3 joined), their qualifying buys total $529.88, and the first three bought within 6 seconds.
-              </li>
-              <li>
-                <strong>Indicators.</strong> Size variation (0 = identical buys), the largest wallet's share, and repeat pairs seen in earlier packs. Facts, not a score.
-              </li>
-              <li>
-                <strong>After the pack.</strong> The token last traded 18.4% below the pack's entry after peaking 62.1% above it, and 4 of 6 pack wallets have sold.
-              </li>
-              <li>
-                <strong>Smart Money buying this token.</strong> 12 Smart Money wallets bought the token in the past hour. They are not necessarily in the pack.
-              </li>
-              <li>
-                <strong>Pack wallets confirmed as Smart Money: 2 of 6.</strong> Two pack wallets' own buys appear in Nansen's Smart Money data. The other four are unconfirmed, not proven otherwise.
-              </li>
-            </ol>
           </div>
         </div>
       </section>
@@ -161,28 +161,22 @@ export function GuidePage() {
         </h2>
         <ol className="callouts guide-prose">
           <li>
-            <strong>Reading this pack.</strong> Start here: what happened, what is worth checking, and what is not known, in plain sentences.
+            <strong>Pack at a glance.</strong> Start here: six of the questions below, answered from this pack's own facts. Each answer links to its evidence.
           </li>
           <li>
-            <strong>Formation.</strong> How many wallets started the pack and how many joined, the pack's total, and its cooldown.
+            <strong>After the pack.</strong> The price against the group's entry (zoom into the first minutes), which pack wallets sold and when, and buying versus selling since.
           </li>
           <li>
-            <strong>Members and evidence.</strong> The timeline, each wallet, and every buy with the price used and a Solscan link.
+            <strong>Earlier packs with these wallets.</strong> The group's history and how those tokens moved in the next 15 minutes.
           </li>
           <li>
-            <strong>Pattern indicators.</strong> Timing, size variation, largest buyer, repeat pairs.
+            <strong>Wallets and transactions.</strong> Who started the pack and who joined later, and every buy with the SOL price used and a Solscan link.
           </li>
           <li>
-            <strong>After the pack.</strong> Price against the pack's entry, peak and low, which pack wallets sold and when, and buying versus selling since.
+            <strong>Smart Money and context.</strong> Nansen data once it has been checked: Smart Money buyers, profiles, relationships, holders.
           </li>
           <li>
-            <strong>Earlier packs with these wallets.</strong> The group's history and how those tokens moved in 15 minutes.
-          </li>
-          <li>
-            <strong>Smart Money.</strong> Token buyers in 5 minutes, 1 hour, 24 hours; confirmed pack wallets; netflow.
-          </li>
-          <li>
-            <strong>Wallet and token context, coverage.</strong> Nansen profiles, relationships, holders, and anything missing.
+            <strong>Technical details.</strong> How the pack formed, pattern measurements, and what the data covers. The full written summary sits under the glance, folded.
           </li>
         </ol>
       </section>
@@ -192,7 +186,7 @@ export function GuidePage() {
           Seven questions before you act
         </h2>
         <p className="muted" style={{ margin: "8px 0 20px", maxWidth: 720 }}>
-          PackLens is one input to a trading decision. These are the questions it can help answer, and where to look.
+          Degentellegence is one input to a trading decision. These are the questions it can help answer, and where to look.
         </p>
         <div className="qa">
           {QUESTIONS.map((x, i) => (
@@ -268,13 +262,15 @@ export function GuidePage() {
                 ["Available", "Data was fetched and is shown with its time."],
                 ["Empty", "Checked, and the source returned nothing."],
                 ["Partial", "Only part of the data was covered; numbers are lower bounds."],
-                ["Window scanned", "The source's full results for the window were checked (not every transaction on the chain)."],
+                ["Full window checked", "Nansen's full results for the window were checked (not every transaction on the chain)."],
                 ["Stale / Last checked", "Older data, kept with its original time."],
-                ["Update delayed", "The newest fetch failed; you see the previous snapshot."],
-                ["Unavailable from this source", "Nansen has no data for this token yet, common for brand-new tokens."],
-                ["Not analyzed yet", "Not picked for automatic analysis; an operator can run it."],
-                ["Analysis paused", "The credit budget or session limit was reached. Detection keeps running."],
-                ["Fixture / Replay / Live", "Synthetic demo data, a recorded dataset at its original times, or the live stream."],
+                ["Update delayed", "The newest fetch failed; you see the previous result."],
+                ["Unavailable from this source", "Nansen has no data for this token yet, common for new tokens."],
+                ["Not checked yet", "Nansen has not been checked for this pack or token. The largest packs are checked automatically while credits allow; an operator can run the rest."],
+                ["Nansen checks paused", "The credit budget or session limit was reached, so no new Nansen checks run."],
+                ["Detection paused", "Shown in the top bar when there is no fresh SOL price: new buys cannot pass the $20 check, so no new packs form. Stored packs stay readable."],
+                ["Forming / Final", "A forming pack can still gain wallets for up to 40 seconds after its first buy; a final one cannot."],
+                ["Example / Replay / Live", "Synthetic example data, a recorded dataset at its original times, or the live stream."],
               ].map(([l, m]) => (
                 <tr key={l}>
                   <td style={{ whiteSpace: "nowrap" }}>
@@ -290,12 +286,12 @@ export function GuidePage() {
 
       <section className="section" id="g-limits" aria-labelledby="g-limits-h">
         <h2 className="h2" id="g-limits-h" style={{ marginBottom: 14 }}>
-          What PackLens cannot tell you
+          What Degentellegence cannot tell you
         </h2>
         <ul className="guide-prose" style={{ paddingLeft: 20 }}>
           <li>What the price will do next. Every number is about the past.</li>
           <li>Whether wallets belong to the same person. A relationship or repeat pairing is a lead, not proof.</li>
-          <li>Whether a token is safe. There is no safety or rug-pull check.</li>
+          <li>Whether a token is safe. There is no safety or rug pull check.</li>
           <li>Trades outside the pump.fun bonding curve: after a token graduates, or on other venues.</li>
           <li>Anything during a collector gap; those periods are labeled.</li>
         </ul>

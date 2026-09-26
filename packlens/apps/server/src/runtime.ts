@@ -26,6 +26,7 @@ import { seedFixtureContext } from "./replay/fixtureContext.js";
 import { newId } from "./lib/ids.js";
 import { log } from "./lib/log.js";
 import { RetentionJob } from "./operations/retention.js";
+import { TokenImageResolver } from "./metadata/tokenImages.js";
 
 export type DecoderCounters = { decodedEvents: number; buys: number; sells: number; undecodable: number; truncatedLogs: number; creates: number };
 
@@ -57,6 +58,7 @@ export class Runtime {
     throw new Error("Live runtime is not started");
   };
   private retention: RetentionJob | null = null;
+  private tokenImages: TokenImageResolver | null = null;
   readonly queue: JobQueue;
 
   private constructor(
@@ -219,6 +221,8 @@ export class Runtime {
     };
     this.handleTransaction = onTransaction;
     const collector = cfg.rpc.wsUrl && this.startCollector ? new PumpCollector(cfg.rpc.wsUrl, clock, db, ns, onTransaction) : null;
+    // Display-only logos for packed tokens; off whenever the collector is (tests stay off the network).
+    this.tokenImages = this.startCollector ? new TokenImageResolver(db, clock, ns) : null;
 
     // Start the live session bounded by NANSEN_SESSION_END_AT.
     if (!session.current()) session.start({ startedBy: "startup" });
@@ -228,6 +232,7 @@ export class Runtime {
     worker.start();
     scheduler.start();
     collector?.start();
+    this.tokenImages?.start();
     this.tickTimer = setInterval(() => {
       try {
         pipeline.tick();
@@ -242,6 +247,7 @@ export class Runtime {
   async stop(): Promise<void> {
     if (this.tickTimer) clearInterval(this.tickTimer);
     this.retention?.stop();
+    this.tokenImages?.stop();
     if (this.live) {
       this.live.collector?.stop();
       this.live.pricePoller.stop();

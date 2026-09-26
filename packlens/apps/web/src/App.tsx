@@ -1,10 +1,10 @@
 import { useEffect } from "react";
-import { BrowserRouter, Route, Routes, useLocation } from "react-router";
+import { BrowserRouter, NavLink, Route, Routes, useLocation } from "react-router";
 import type { SourceStatus } from "@packlens/contracts";
 import { EventsProvider } from "./api/events";
 import { useApi } from "./api/hooks";
 import { TopBar } from "./components/TopBar";
-import { useNamespace } from "./state/namespace";
+import { useNamespace, useNsHref } from "./state/namespace";
 import { RadarPage } from "./pages/RadarPage";
 import { PackDetailPage } from "./pages/PackDetailPage";
 import { WalletPage } from "./pages/WalletPage";
@@ -13,6 +13,7 @@ import { SmartMoneyPage } from "./pages/SmartMoneyPage";
 import { OperatorPage } from "./pages/OperatorPage";
 import { GuidePage } from "./pages/GuidePage";
 import { NotFoundPage } from "./pages/NotFoundPage";
+import symbolUrl from "./assets/brand/symbol-red-160.png";
 
 function ScrollToTop() {
   const { pathname } = useLocation();
@@ -24,6 +25,7 @@ function ScrollToTop() {
 
 function Shell() {
   const namespace = useNamespace();
+  const href = useNsHref();
   const status = useApi<SourceStatus>("/api/status", namespace ? { namespace } : {});
   useEffect(() => {
     const t = setInterval(status.reload, 15_000);
@@ -52,10 +54,20 @@ function Shell() {
         </main>
         <footer className="footer">
           <div className="container">
-            <span>
-              PackLens · Detection: at least 3 unique wallets, $20 per eligible buy, within 20 seconds. Smart Money is context only.
-            </span>
-            <span>Research tool. Not trading advice. Times are shown in UTC.</span>
+            <div className="footer-brand">
+              <img src={symbolUrl} width={32} height={32} alt="" />
+              <div>
+                <span className="brand-name">Degentellegence</span>
+                <span className="tagline">Follow the evidence.</span>
+              </div>
+            </div>
+            <div className="footer-meta">
+              <span>Detection: at least 3 unique wallets, $20 per eligible buy, within 20 seconds. Smart Money is context only.</span>
+              <span>Research tool. Not trading advice. Times are shown in UTC.</span>
+              <span>
+                <NavLink to={href("/guide")}>Guide</NavLink> · <NavLink to={href("/operator")}>Operator</NavLink>
+              </span>
+            </div>
           </div>
         </footer>
       </div>

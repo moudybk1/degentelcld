@@ -41,7 +41,7 @@ const TRADE_SQL = `SELECT event_id, event_time_ms AS t, wallet, side,
     json_extract(payload_json, '$.tokenAmountRaw') AS tok, json_extract(payload_json, '$.quoteAmountRaw') AS q,
     json_extract(payload_json, '$.quoteDecimals') AS qd, json_extract(payload_json, '$.tokenDecimals') AS td,
     json_extract(payload_json, '$.quoteUsdPrice') AS px
-  FROM trade_events WHERE namespace = ? AND mint = ? AND event_time_ms >= ? AND valuation_status <> 'unsupported_quote'
+  FROM trade_events WHERE namespace = ? AND chain = 'solana' AND mint = ? AND event_time_ms >= ? AND valuation_status <> 'unsupported_quote'
   ORDER BY event_time_ms, slot, signature, event_ordinal`;
 
 function pct(price: Decimal, entry: Decimal): number {
@@ -85,21 +85,22 @@ export function afterSummary(db: Db, pack: PackBasics, memberCount: number): Aft
     .prepare(
       `SELECT COUNT(*) AS n, MAX(p) AS maxp FROM (
          SELECT CAST(json_extract(payload_json, '$.quoteAmountRaw') AS REAL) / CAST(json_extract(payload_json, '$.tokenAmountRaw') AS REAL) AS p
-         FROM trade_events WHERE namespace = ? AND mint = ? AND event_time_ms > ? AND valuation_status <> 'unsupported_quote'
+         FROM trade_events WHERE namespace = ? AND chain = 'solana' AND mint = ? AND event_time_ms > ? AND valuation_status <> 'unsupported_quote'
            AND CAST(json_extract(payload_json, '$.tokenAmountRaw') AS REAL) > 0)`,
     )
     .get(pack.namespace, pack.mint, pack.trigger_event_time_ms) as { n: number; maxp: number | null };
   const last = db
     .prepare(
       `SELECT event_time_ms AS t, json_extract(payload_json, '$.tokenAmountRaw') AS tok, json_extract(payload_json, '$.quoteAmountRaw') AS q
-       FROM trade_events WHERE namespace = ? AND mint = ? AND event_time_ms >= ? AND valuation_status <> 'unsupported_quote'
+       FROM trade_events WHERE namespace = ? AND chain = 'solana' AND mint = ? AND event_time_ms >= ? AND valuation_status <> 'unsupported_quote'
        ORDER BY event_time_ms DESC, slot DESC, signature DESC, event_ordinal DESC LIMIT 1`,
     )
     .get(pack.namespace, pack.mint, pack.first_event_time_ms) as { t: number; tok: string; q: string } | undefined;
   const sold = db
     .prepare(
-      `SELECT COUNT(DISTINCT te.wallet) AS n FROM trade_events te JOIN pack_members pm ON pm.pack_id = ? AND pm.wallet = te.wallet
-       WHERE te.namespace = ? AND te.mint = ? AND te.side = 'sell' AND te.event_time_ms >= pm.first_entry_time_ms`,
+      `SELECT COUNT(*) AS n FROM pack_members pm WHERE pm.pack_id = ? AND EXISTS (
+         SELECT 1 FROM trade_events te WHERE te.namespace = ? AND te.chain = 'solana' AND te.mint = ? AND te.wallet = pm.wallet
+           AND te.side = 'sell' AND te.event_time_ms >= pm.first_entry_time_ms)`,
     )
     .get(pack.id, pack.namespace, pack.mint) as { n: number };
   let lastChangePct: number | null = null;
@@ -233,10 +234,15 @@ export function afterDetail(db: Db, pack: PackBasics, members: { walletAddress: 
 
   // Prices in SOL and, when a valued price is known, in USD.
   const lastPriceSol = last ? last.priceRaw.times(new Decimal(10).pow(last.td - last.qd)) : null;
-  const solUsdRow = db
-    .prepare("SELECT json_extract(payload_json, '$.quoteUsdPrice') AS px FROM trade_events WHERE namespace = ? AND valuation_status = 'valued' ORDER BY received_at_ms DESC LIMIT 1")
-    .get(pack.namespace) as { px: string | null } | undefined;
-  const solUsd = last?.px ?? solUsdRow?.px ?? null;
+  // Fall back to the most recently normalized valued trade; normalized_at_ms is indexed, received_at_ms is not.
+  const solUsd =
+    last?.px ??
+    (
+      db
+        .prepare("SELECT json_extract(payload_json, '$.quoteUsdPrice') AS px FROM trade_events WHERE namespace = ? AND valuation_status = 'valued' ORDER BY normalized_at_ms DESC LIMIT 1")
+        .get(pack.namespace) as { px: string | null } | undefined
+    )?.px ??
+    null;
   const lastPriceUsd = lastPriceSol && solUsd ? lastPriceSol.times(parseDecimal(solUsd)) : null;
   const supply = life?.token_total_supply_raw ? parseDecimal(life.token_total_supply_raw).div(new Decimal(10).pow(last?.td ?? 6)) : null;
 
@@ -244,7 +250,7 @@ export function afterDetail(db: Db, pack: PackBasics, members: { walletAddress: 
   if (life?.completed_at_ms) {
     notes.push(`The token completed its pump.fun bonding curve at ${new Date(life.completed_at_ms).toISOString()}. Trades after that happen on other venues and are not observed here.`);
   }
-  notes.push("Only SOL-priced trades on the pump.fun bonding curve are observed. Transfers and other venues are not.");
+  notes.push("Only trades priced in SOL on the pump.fun bonding curve are observed. Transfers and other venues are not.");
   if (pack.namespace.startsWith("live:") && nowMs - pack.trigger_event_time_ms > RETENTION_MS) notes.push("Trades older than 24 hours are removed from storage, so the early history after this pack may be incomplete.");
   const gaps = db
     .prepare("SELECT COUNT(*) AS n FROM collector_gaps WHERE namespace = ? AND started_at_ms <= ? AND (ended_at_ms IS NULL OR ended_at_ms >= ?)")

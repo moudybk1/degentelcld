@@ -11,20 +11,24 @@ export const GLOSSARY = {
     term: "Pack buys",
     text: "The total of the pack's own buys, each at least $20. It is not the token's total trading volume.",
   },
+  pack: {
+    term: "Pack",
+    text: "A group of 3 or more different wallets that each bought at least $20 of the same pump.fun token within 20 seconds. It shows buying happened together, not who is behind it or what the price will do.",
+  },
   entrySpread: {
-    term: "Entry spread",
+    term: "Entry window",
     text: "Time between the first and the last buy of the wallets that started the pack. 0 s means they all landed in the same second.",
   },
   initialExpanded: {
-    term: "Initial and expanded wallets",
-    text: "Initial wallets formed the pack (3 or more within 20 seconds). Expanded wallets joined within 40 seconds of the first buy while the group was still active.",
+    term: "Started it or joined later",
+    text: "The wallets that started the pack bought within 20 seconds of each other (3 or more). Wallets that joined later bought within 40 seconds of the first buy while the group was still active.",
   },
   packState: {
-    term: "Collecting or frozen",
-    text: "Collecting: the pack can still gain wallets. Frozen: the 40-second window has closed and membership is final.",
+    term: "Forming or final",
+    text: "Forming: the pack can still gain wallets, up to 40 seconds after its first buy. Final: that window has closed and the list of wallets is fixed.",
   },
   sizeCV: {
-    term: "Buy-size variation",
+    term: "Buy size variation",
     text: "How much the wallets' buy sizes differ. 0 means every wallet spent the same; above 1 means very uneven sizes. Very uniform sizing is worth a closer look.",
   },
   largestBuyer: {
@@ -72,8 +76,8 @@ export const GLOSSARY = {
     text: "Nansen's net Smart Money flow for the token, including exchange transfers. A separate metric; it never confirms a pack wallet's buy.",
   },
   analysis: {
-    term: "Wallet analysis",
-    text: "Nansen wallet histories, relationships, and holders. The largest packs are analyzed automatically while credits allow; others show 'Not analyzed yet' until an operator runs it.",
+    term: "Nansen checks",
+    text: "Nansen wallet histories, relationships, and holders. The largest packs are checked automatically while credits allow; others show 'Not checked yet' until an operator runs the checks.",
   },
   priceEstimate: {
     term: "USD values",

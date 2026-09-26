@@ -8,7 +8,7 @@ import { InfoTip } from "./InfoTip";
 import { Address, Empty, Note, Tag, useRowLimit } from "./ui";
 
 export function Delta({ pct }: { pct: number | null }) {
-  if (pct === null) return <span className="delta flat">—</span>;
+  if (pct === null) return <span className="delta flat">n/a</span>;
   const cls = pct > 0.05 ? "up" : pct < -0.05 ? "down" : "flat";
   return <span className={`delta ${cls}`}>{signed(pct)}</span>;
 }
@@ -82,7 +82,7 @@ export function AfterSection({ core, after, synthetic }: { core: Pack; after: Af
               Peak after the pack
               <InfoTip k="peak" />
             </span>
-            <span className="stat-value">{after.peak ? <Delta pct={after.peak.changePct} /> : <span className="delta flat">—</span>}</span>
+            <span className="stat-value">{after.peak ? <Delta pct={after.peak.changePct} /> : <span className="delta flat">n/a</span>}</span>
             <span className="stat-note">
               {after.peak ? `${secondsLabel(Math.round((Date.parse(after.peak.at) - core.triggerEventTimeMs) / 1000))} after it formed` : "No trades after the pack yet"}
               {after.trough ? ` · low ${signed(after.trough.changePct)}` : ""}
@@ -161,7 +161,7 @@ export function AfterSection({ core, after, synthetic }: { core: Pack; after: Af
                 <td className="small">
                   {r.secondsToFirstSell === null ? <span className="muted">No sale observed</span> : r.secondsToFirstSell === 0 ? "Same second as first buy" : `${secondsLabel(r.secondsToFirstSell)} after first buy`}
                 </td>
-                <td className="mono small">{r.lastActionAt ? timeUtc(r.lastActionAt) : "—"}</td>
+                <td className="mono small">{r.lastActionAt ? timeUtc(r.lastActionAt) : "n/a"}</td>
               </tr>
             ))}
           </tbody>

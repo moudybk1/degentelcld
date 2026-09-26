@@ -278,6 +278,8 @@ export type TokenIdentity = {
   symbol: string | null;
   /** Where the name/symbol came from; token text is untrusted display data. */
   identitySource: "pumpfun_create_event" | "nansen_token_information" | null;
+  /** Same-origin URL of the stored logo (display only), or null when none is stored yet. */
+  imageUrl: string | null;
 };
 
 export type TokenInfoData = {
@@ -542,6 +544,69 @@ export type RadarFilters = {
 };
 
 /* ------------------------------------------------------------------ */
+/* Radar overview (aggregates over the same filters as the list)       */
+/* ------------------------------------------------------------------ */
+
+/** A ranked pack in the overview. Stored pack columns only; no after-pack trades. */
+export type OverviewPack = {
+  id: string;
+  token: TokenIdentity;
+  triggerEventTimeMs: number;
+  totalWalletCount: number;
+  eligibleBuyUsd: string;
+  initialEntrySpanMs: number | null;
+  cooccurrencePairCount: number;
+};
+
+export type OverviewBucket = {
+  /** Bucket start, epoch ms (chain time of the pack trigger). */
+  startMs: number;
+  packs: number;
+  eligibleBuyUsd: string;
+};
+
+export type OverviewData = {
+  asOf: string;
+  /** The period actually summarized: the requested range, clamped to when this namespace started observing events. */
+  range: { fromMs: number; toMs: number } | null;
+  /** First observed source event in this namespace; nothing before it was watched. */
+  coverageStartMs: number | null;
+  totals: {
+    packs: number;
+    tokens: number;
+    /** Tokens with more than one pack in the range. */
+    repeatTokens: number;
+    eligibleBuyUsd: string;
+    medianWallets: number | null;
+    maxWallets: number | null;
+    medianEntrySpanMs: number | null;
+    /** Packs with at least one wallet pair that also bought together in an earlier pack. */
+    repeatPairPacks: number;
+  };
+  bucketMs: number;
+  buckets: OverviewBucket[];
+  /** Pack size (unique wallets) in ordered bands. */
+  sizeBands: { label: string; min: number; max: number | null; packs: number }[];
+  /** Collector disconnects overlapping the range: nothing was observed inside them. */
+  gaps: { startMs: number; endMs: number | null; reason: string }[];
+  top: {
+    byWallets: OverviewPack[];
+    byUsd: OverviewPack[];
+    /** Tokens with more than one pack in the range, most packs first. */
+    repeatTokens: OverviewToken[];
+  };
+  filters: RadarFilters;
+};
+
+export type OverviewToken = {
+  token: TokenIdentity;
+  packs: number;
+  eligibleBuyUsd: string;
+  latestPackId: string;
+  latestTriggerMs: number;
+};
+
+/* ------------------------------------------------------------------ */
 /* Status and health                                                   */
 /* ------------------------------------------------------------------ */
 
@@ -610,6 +675,16 @@ export type TokenPageData = {
   packs: PackListItem[];
   isDemoPinned: boolean;
   firstSeenInSource: string | null;
+  /** Additive: from the observed pump.fun create and complete events (null when not observed). */
+  createdAt: string | null;
+  graduatedAt: string | null;
+};
+
+/** Top bar search: tokens with packs by name, symbol, or mint, and a wallet by exact address. */
+export type SearchData = {
+  query: string;
+  tokens: { token: TokenIdentity; packs: number; latestPackId: string; latestTriggerMs: number }[];
+  wallet: { address: string; packs: number } | null;
 };
 
 export type SmartMoneyActivityRow = {
@@ -638,10 +713,29 @@ export type SmartMoneyActivityData = {
   scopeDescription: string;
 };
 
+export type WalletPackRow = {
+  packId: string;
+  tokenAddress: string;
+  tokenSymbol: string | null;
+  /** Additive: full identity (name, logo) for display. */
+  token: TokenIdentity;
+  memberKind: "initial" | "expanded";
+  firstEntryTimeMs: number;
+  eligibleBuyUsd: string;
+  triggerEventTimeMs: number;
+  /** Additive: this wallet's first observed sell of the token after its first pack buy (null when none is observed). */
+  firstSellTimeMs: number | null;
+  /** Additive: token creation time from the observed create event (null when not observed). */
+  tokenCreatedAtMs: number | null;
+};
+
 export type WalletPageData = {
   walletAddress: string;
   context: WalletContext;
-  packs: { packId: string; tokenAddress: string; tokenSymbol: string | null; memberKind: "initial" | "expanded"; firstEntryTimeMs: number; eligibleBuyUsd: string; triggerEventTimeMs: number }[];
+  /** The most recent packs (up to 100), newest first. */
+  packs: WalletPackRow[];
+  /** Additive: every pack this wallet is in, not only the rows returned. */
+  packCount: number;
 };
 
 /* ------------------------------------------------------------------ */

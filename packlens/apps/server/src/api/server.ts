@@ -134,8 +134,7 @@ export function buildServer(runtime: Runtime, opts: { webDist?: string | null; l
     includeInvalidated: z.enum(["true", "false"]).default("false"),
   });
 
-  app.get("/api/packs", async (req, reply) => {
-    const { namespace, mode } = resolveNamespace(req);
+  const parseRadarQuery = (req: FastifyRequest): { q: z.infer<typeof ListQuery>; filters: RadarFilters } => {
     const parsed = ListQuery.safeParse(req.query);
     if (!parsed.success) throw new HttpError(400, "INVALID_INPUT", `Invalid filter: ${parsed.error.issues[0]?.path.join(".") ?? "query"}.`);
     const q = parsed.data;
@@ -152,10 +151,22 @@ export function buildServer(runtime: Runtime, opts: { webDist?: string | null; l
       confirmedSmartMoneyOnly: q.confirmedSmartMoneyOnly === "true",
       includeInvalidated: q.includeInvalidated === "true",
     };
+    return { q, filters };
+  };
+
+  app.get("/api/packs", async (req, reply) => {
+    const { namespace, mode } = resolveNamespace(req);
+    const { q, filters } = parseRadarQuery(req);
     const seq = latestOutboxSequence(db);
     const data = read.listPacks(namespace, filters, q.cursor ?? null, q.limit);
     void reply.header("X-Outbox-Sequence", String(seq));
     return { ...envelope(req, "pack-list.v1", namespace, mode, data), sequence: seq };
+  });
+
+  app.get("/api/overview", async (req) => {
+    const { namespace, mode } = resolveNamespace(req);
+    const { filters } = parseRadarQuery(req);
+    return envelope(req, "radar-overview.v1", namespace, mode, read.overview(namespace, filters));
   });
 
   app.get("/api/packs/after", async (req) => {
@@ -202,6 +213,30 @@ export function buildServer(runtime: Runtime, opts: { webDist?: string | null; l
     if (!isSolanaAddress(address)) throw new HttpError(400, "INVALID_INPUT", "Invalid Solana token address.");
     const { namespace, mode } = resolveNamespace(req);
     return envelope(req, "token.v1", namespace, mode, read.tokenPage(namespace, address));
+  });
+
+  app.get("/api/tokens/:chain/:address/image", async (req, reply) => {
+    const { chain, address } = req.params as { chain: string; address: string };
+    if (chain !== "solana") throw new HttpError(400, "INVALID_INPUT", "Only Solana is supported.");
+    if (!isSolanaAddress(address)) throw new HttpError(400, "INVALID_INPUT", "Invalid Solana token address.");
+    const { namespace } = resolveNamespace(req);
+    const img = read.tokenImage(namespace, address);
+    if (!img) throw new HttpError(404, "NOT_FOUND", "No logo is stored for this token.");
+    // The type was checked by magic bytes when stored; the headers keep the bytes inert in every context.
+    return reply
+      .type(img.contentType)
+      .header("Cache-Control", "public, max-age=604800, immutable")
+      .header("X-Content-Type-Options", "nosniff")
+      .header("Content-Security-Policy", "default-src 'none'; sandbox")
+      .header("Cross-Origin-Resource-Policy", "same-origin")
+      .send(img.bytes);
+  });
+
+  app.get("/api/search", async (req) => {
+    const { namespace, mode } = resolveNamespace(req);
+    const q = (req.query as { q?: unknown }).q;
+    if (typeof q !== "string" || q.length > 200) throw new HttpError(400, "INVALID_INPUT", "Provide a search text of at most 200 characters.");
+    return envelope(req, "search.v1", namespace, mode, read.search(namespace, q));
   });
 
   app.get("/api/smart-money/activity", async (req) => {

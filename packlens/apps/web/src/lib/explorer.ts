@@ -17,6 +17,15 @@ export function tokenUrl(mint: string): string | null {
   return valid(mint, 32, 44) ? `https://solscan.io/token/${mint}` : null;
 }
 
+/** Where traders look at a pump.fun token next. */
+export function pumpFunUrl(mint: string): string | null {
+  return valid(mint, 32, 44) ? `https://pump.fun/coin/${mint}` : null;
+}
+
+export function dexScreenerUrl(mint: string): string | null {
+  return valid(mint, 32, 44) ? `https://dexscreener.com/solana/${mint}` : null;
+}
+
 export function nansenWalletUrl(address: string): string | null {
   return valid(address, 32, 44) ? `https://app.nansen.ai/profiler?address=${address}&chain=solana` : null;
 }

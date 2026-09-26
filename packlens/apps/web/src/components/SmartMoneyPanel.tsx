@@ -23,7 +23,7 @@ export function SmartMoneyWindows({ windows, asOf }: { windows: SmartMoneyWindow
             <span className="window-count" title="Wallets that bought and later sold remain buyers for the window. Buyer status does not imply current holding.">
               {unknown ? (
                 <span style={{ fontSize: 22 }} className="muted">
-                  Not checked
+                  Not checked yet
                 </span>
               ) : w.countQualifier === "at_least" && w.observedUniqueBuyers === 0 ? (
                 <span style={{ fontSize: 22 }} className="muted">
@@ -39,7 +39,7 @@ export function SmartMoneyWindows({ windows, asOf }: { windows: SmartMoneyWindow
             <span className="small muted">{t.detail}</span>
             {!unknown && (
               <div className="row" style={{ gap: 6, marginTop: 4 }}>
-                {w.state.coverage === "window_scanned" ? <Tag tone="outline">Window scanned</Tag> : <Tag tone="yellow">Partial</Tag>}
+                {w.state.coverage === "window_scanned" ? <Tag tone="outline">Full window checked</Tag> : <Tag tone="yellow">Partial</Tag>}
                 {w.state.freshness === "stale" && <Tag tone="outline">Stale</Tag>}
               </div>
             )}
@@ -78,15 +78,15 @@ export function NetflowPanel({ netflow }: { netflow: Panel<Netflow> }) {
         </div>
       ) : (
         <p className="small muted" style={{ margin: 0 }}>
-          {netflow.state.availability === "empty" ? "No netflow row for this token in the checked provider data." : "Netflow has not been checked for this token."}
+          {netflow.state.availability === "empty" ? "Nansen returned no netflow for this token." : "Netflow has not been checked for this token yet."}
         </p>
       )}
       <p className="tiny muted" style={{ margin: "14px 0 0" }}>
-        Provider metric with its own periods. It can include activity beyond DEX purchases and does not confirm any pack member's entry.
-        {netflow.data?.traderCount30d != null ? ` Provider trader count (30 days): ${netflow.data.traderCount30d}.` : ""}
+        Nansen's net Smart Money flow, over its own periods. It can include activity beyond DEX buys and never confirms a pack wallet's buy.
+        {netflow.data?.traderCount30d != null ? ` Nansen trader count (30 days): ${netflow.data.traderCount30d}.` : ""}
       </p>
       <div style={{ marginTop: 10 }}>
-        <PanelStatus state={netflow.state} source="Nansen smart-money/netflow" />
+        <PanelStatus state={netflow.state} source="Nansen netflow" />
       </div>
     </div>
   );
@@ -111,7 +111,7 @@ export function SmartMoneyEvidence({ packId }: { packId: string }) {
     <div style={{ marginTop: 14 }}>
       {!open ? (
         <button type="button" className="btn sm" onClick={load}>
-          <Eye size={14} weight="bold" aria-hidden="true" /> View stored Smart Money evidence
+          <Eye size={14} weight="bold" aria-hidden="true" /> Show the Smart Money trades behind this
         </button>
       ) : rows === null ? (
         <p className="small muted">Loading stored observations…</p>
@@ -142,7 +142,7 @@ export function SmartMoneyEvidence({ packId }: { packId: string }) {
                   </td>
                   <td className="num">{r.tradeValueUsd ? usd(r.tradeValueUsd) : <span className="muted">No USD value</span>}</td>
                   <td className="small muted">{r.scope}</td>
-                  <td>{confirmed.has(r.observationId) ? <Tag tone="green">Pack transaction</Tag> : <span className="muted small">—</span>}</td>
+                  <td>{confirmed.has(r.observationId) ? <Tag tone="green">Pack transaction</Tag> : <span className="muted small">n/a</span>}</td>
                 </tr>
               ))}
             </tbody>
@@ -171,6 +171,25 @@ export function SmartMoneySection({
   const w24 = windows[2];
   const fetched = windows[0]?.state.fetchedAt ?? null;
   const partial24 = w24 && w24.countQualifier !== "unknown" && w24.state.coverage !== "window_scanned";
+  const nothingChecked =
+    windows.every((w) => w.countQualifier === "unknown" || w.observedUniqueBuyers === null) &&
+    (!confirmation || confirmation.confirmedMemberCount === null) &&
+    netflow.state.availability === "not_requested";
+  if (nothingChecked) {
+    // One sentence instead of five panels that all say "not checked".
+    return (
+      <div className="unchecked">
+        <p>
+          <strong>Smart Money has not been checked for this {packId ? "pack" : "token"} yet.</strong> Nansen data is fetched for the largest packs while credits allow. Not checked is different from none.
+        </p>
+        {tokenHref ? (
+          <Link className="text-link small" to={tokenHref}>
+            Open the token page
+          </Link>
+        ) : null}
+      </div>
+    );
+  }
   return (
     <div className="stack" style={{ gap: 14 }}>
       <SmartMoneyWindows windows={windows} asOf={asOf} />
@@ -184,7 +203,7 @@ export function SmartMoneySection({
             <div className="window-count" style={{ fontSize: 40 }}>
               {confirmation.confirmedMemberCount === null ? (
                 <span className="muted" style={{ fontSize: 22 }}>
-                  Not checked
+                  Not checked yet
                 </span>
               ) : (
                 <>
@@ -196,8 +215,7 @@ export function SmartMoneySection({
               )}
             </div>
             <p className="small muted" style={{ margin: "8px 0 0" }}>
-              A member is confirmed only when a Smart Money observation matches its pack transaction, wallet, and bought token. Unconfirmed members are not proven to be non-Smart Money.
-              {confirmation.evidenceVersion !== null && packId ? ` Checked against evidence version ${confirmation.evidenceVersion}.` : ""}
+              A member is confirmed only when a Smart Money observation matches its pack transaction, wallet, and bought token. An unconfirmed member is not proven to be outside Smart Money.
             </p>
           </div>
         )}
@@ -214,7 +232,7 @@ export function SmartMoneySection({
         ) : (
           "Smart Money data has not been checked for this token. "
         )}
-        Token-wide buyers and confirmed pack members are separate metrics with different periods. Smart Money does not change pack detection, indicators, or ordering.
+        Buyers across the whole token and confirmed pack members are separate metrics with different periods. Smart Money does not change pack detection, indicators, or ordering.
         {tokenHref ? (
           <>
             {" "}

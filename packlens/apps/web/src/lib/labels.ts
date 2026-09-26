@@ -3,7 +3,7 @@ import type { AnalysisState, MemberMatchState, SmartMoneyWindowMetric } from "@p
 /** Token-wide Smart Money buyer wording (PRD §10, blueprint §17.7). */
 export function buyerCountText(m: SmartMoneyWindowMetric | undefined, period: string): { headline: string; detail: string } {
   if (!m || m.countQualifier === "unknown" || m.observedUniqueBuyers === null) {
-    return { headline: "Not checked", detail: `Smart Money buyers over ${period} have not been analyzed yet.` };
+    return { headline: "Not checked yet", detail: `Smart Money buyers over ${period} have not been checked yet.` };
   }
   const n = m.observedUniqueBuyers;
   if (m.countQualifier === "observed") {
@@ -17,26 +17,26 @@ export function buyerCountText(m: SmartMoneyWindowMetric | undefined, period: st
 }
 
 export function confirmedText(confirmed: number | null, total: number): string {
-  if (confirmed === null) return "Not checked";
+  if (confirmed === null) return "Not checked yet";
   return `${confirmed} of ${total}`;
 }
 
 export function analysisLabel(s: AnalysisState): { text: string; tone: "gray" | "green" | "yellow" | "red" | "blue" | "outline" } {
   switch (s) {
     case "not_requested":
-      return { text: "Not analyzed yet", tone: "outline" };
+      return { text: "Not checked yet", tone: "outline" };
     case "queued":
-      return { text: "Queued", tone: "blue" };
+      return { text: "Nansen checks queued", tone: "blue" };
     case "running":
-      return { text: "Analysis running", tone: "blue" };
+      return { text: "Nansen checks running", tone: "blue" };
     case "partial":
-      return { text: "Partial analysis", tone: "yellow" };
+      return { text: "Nansen checks partial", tone: "yellow" };
     case "complete":
-      return { text: "Analysis complete", tone: "green" };
+      return { text: "Nansen checks done", tone: "green" };
     case "error":
-      return { text: "Analysis error", tone: "red" };
+      return { text: "Nansen checks failed", tone: "red" };
     case "budget_paused":
-      return { text: "Analysis paused", tone: "yellow" };
+      return { text: "Nansen checks paused", tone: "yellow" };
   }
 }
 
@@ -51,7 +51,7 @@ export function matchLabel(s: MemberMatchState): { text: string; tone: "gray" | 
     case "checked_no_match":
       return { text: "Not confirmed", tone: "outline", help: "Not confirmed in the checked data. This does not prove the wallet is not Smart Money." };
     case "not_checked":
-      return { text: "Not checked", tone: "outline", help: "Smart Money data has not been checked for this member." };
+      return { text: "Not checked yet", tone: "outline", help: "Smart Money data has not been checked for this member." };
   }
 }
 

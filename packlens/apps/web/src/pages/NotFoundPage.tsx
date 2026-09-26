@@ -6,9 +6,7 @@ export function NotFoundPage() {
   return (
     <div className="container">
       <div className="eyebrow">404</div>
-      <h1 className="display">
-        Nothing here <em>to investigate.</em>
-      </h1>
+      <h1 className="display">Nothing here to investigate</h1>
       <p className="lede">This page does not exist.</p>
       <p style={{ marginTop: 24 }}>
         <Link className="btn primary" to={href("/")}>

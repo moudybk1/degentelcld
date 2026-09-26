@@ -167,7 +167,7 @@ describe("readout rules", () => {
         firstEventTimeMs: Date.parse("2026-09-24T12:00:00Z"), triggerEventTimeMs: Date.parse("2026-09-24T12:00:05Z"), triggeredAtMs: 0,
         lastAcceptedEventTimeMs: 0, initialWalletCount: 3, totalWalletCount: 3, eligibleBuyUsd: "100", expansionEndMs: 0, suppressUntilMs: 0, coreVersion: 1, evidenceVersion: 1,
       },
-      token: { chain: "solana", mint: "T", name: "Test", symbol: "TST", identitySource: "pumpfun_create_event" },
+      token: { chain: "solana", mint: "T", name: "Test", symbol: "TST", identitySource: "pumpfun_create_event", imageUrl: null },
       patterns: { formulaVersion: "patterns-v1", initialEntrySpanMs: 5000, allMemberEntrySpanMs: 5000, memberCount: 3, buySizeCV: "0.5", largestBuyerShare: "0.4", cooccurrencePairCount: 0, cooccurrenceCoverageStart: null, patternScore: null },
       after,
       earlier: [],

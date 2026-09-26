@@ -22,13 +22,13 @@ function seconds(ms: number): string {
 export function packSentence(core: Pack, patterns: PatternMetrics): string {
   const parts = [
     patterns.initialEntrySpanMs === 0
-      ? `${core.initialWalletCount} wallets made eligible buys in the same second.`
-      : `${core.initialWalletCount} wallets made eligible buys within ${seconds(patterns.initialEntrySpanMs)} seconds.`,
+      ? `${core.initialWalletCount} wallets each bought $20 or more in the same second.`
+      : `${core.initialWalletCount} wallets each bought $20 or more within ${seconds(patterns.initialEntrySpanMs)} seconds.`,
   ];
   if (core.totalWalletCount > core.initialWalletCount) {
-    parts.push(`${core.totalWalletCount - core.initialWalletCount} more joined during expansion (${core.totalWalletCount} in total).`);
+    parts.push(`${core.totalWalletCount - core.initialWalletCount} more joined later (${core.totalWalletCount} in total).`);
   }
-  parts.push(`Observed pack purchases: ${formatUsd(core.eligibleBuyUsd)}.`);
+  parts.push(`Together they bought ${formatUsd(core.eligibleBuyUsd)}.`);
   return parts.join(" ");
 }
 
@@ -45,7 +45,7 @@ export function smartMoneySentence(oneHour: SmartMoneyWindowMetric | undefined, 
         : `At least ${n} Smart Money ${n === 1 ? "buyer" : "buyers"} observed over 1 hour`;
   const members =
     confirmation.confirmedMemberCount === null
-      ? "pack member confirmation has not been checked"
-      : `${confirmation.confirmedMemberCount} of ${confirmation.totalMemberCount} pack members confirmed`;
+      ? "pack wallets have not been checked"
+      : `${confirmation.confirmedMemberCount} of ${confirmation.totalMemberCount} pack wallets confirmed`;
   return `${buyers}; ${members}.`;
 }

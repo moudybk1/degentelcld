@@ -1,13 +1,13 @@
-import { Link, useParams } from "react-router";
+import { Link, useLocation, useParams } from "react-router";
 import type { TokenPageData } from "@packlens/contracts";
 import { useEventListener } from "../api/events";
 import { useApi, useNow } from "../api/hooks";
 import { HoldersCard, TokenInfoCard } from "../components/ContextPanels";
 import { PackCard } from "../components/PackCard";
 import { SmartMoneySection } from "../components/SmartMoneyPanel";
-import { Address, Empty, ErrorNote, ExtLink, LoadingBlock, ModeBadge, Reveal, Tag, TokenAvatar } from "../components/ui";
-import { dateTimeUtc } from "../lib/format";
-import { tokenUrl } from "../lib/explorer";
+import { Address, Empty, ErrorNote, ExtLink, LoadingBlock, ModeBadge, Reveal, Tag, TokenAvatar, type FromState } from "../components/ui";
+import { dateTimeUtc, relative, shortAddr } from "../lib/format";
+import { dexScreenerUrl, pumpFunUrl, tokenUrl } from "../lib/explorer";
 import { useNsHref } from "../state/namespace";
 
 export function TokenPage() {
@@ -21,15 +21,23 @@ export function TokenPage() {
     },
     [mint, reload],
   );
+  const from = (useLocation().state as FromState | null)?.from;
   const synthetic = meta?.mode === "fixture";
   const name = data?.token.name || "Unknown token";
+  const contextUnchecked = data ? data.tokenInfo.state.availability === "not_requested" && data.holders.state.availability === "not_requested" : false;
 
   return (
     <div className="container">
       <nav className="breadcrumb" aria-label="Breadcrumb">
         <Link to={href("/")}>Pack Radar</Link>
+        {from && (
+          <>
+            <span aria-hidden="true">/</span>
+            <Link to={from.href}>{from.label}</Link>
+          </>
+        )}
         <span aria-hidden="true">/</span>
-        <span>Token</span>
+        <span>{data?.token.symbol ?? data?.token.name ?? `Token ${shortAddr(mint)}`}</span>
       </nav>
       {error && !data ? (
         <div className="section">
@@ -43,7 +51,7 @@ export function TokenPage() {
         <>
           <Reveal>
             <header className="row" style={{ gap: 18, marginTop: 20, alignItems: "flex-start", flexWrap: "nowrap" }}>
-              <TokenAvatar mint={mint} symbol={data.token.symbol} name={data.token.name} large />
+              <TokenAvatar mint={mint} symbol={data.token.symbol} name={data.token.name} image={data.token.imageUrl} large />
               <div style={{ minWidth: 0 }}>
                 <div className="row" style={{ gap: 8 }}>
                   <ModeBadge mode={meta?.mode} />
@@ -54,9 +62,15 @@ export function TokenPage() {
                 </h1>
                 <div className="row" style={{ gap: 14, marginTop: 8 }}>
                   <Address value={mint} copyLabel="Copy token address" head={6} tail={6} />
+                  {!synthetic && <ExtLink href={pumpFunUrl(mint)}>pump.fun</ExtLink>}
+                  {!synthetic && <ExtLink href={dexScreenerUrl(mint)}>DexScreener</ExtLink>}
                   {!synthetic && <ExtLink href={tokenUrl(mint)}>Solscan</ExtLink>}
-                  <span className="small muted">{data.firstSeenInSource ? `First seen in source ${dateTimeUtc(data.firstSeenInSource)}` : "Not seen in the monitored source"}</span>
                 </div>
+                <p className="small muted token-facts">
+                  {data.createdAt ? `Created ${dateTimeUtc(data.createdAt)} (${relative(data.createdAt, now)})` : data.firstSeenInSource ? `First seen ${dateTimeUtc(data.firstSeenInSource)}; its creation was not observed` : "Not seen in the monitored pump.fun stream"}
+                  {data.graduatedAt ? ` · Left the bonding curve ${dateTimeUtc(data.graduatedAt)}; later trades happen elsewhere and are not observed here` : ""}
+                  {` · ${data.packs.length} ${data.packs.length === 1 ? "pack" : "packs"} recorded`}
+                </p>
               </div>
             </header>
           </Reveal>
@@ -66,7 +80,7 @@ export function TokenPage() {
               <h2 className="h2" id="t-packs">Packs on this token</h2>
             </div>
             {data.packs.length === 0 ? (
-              <Empty title="No pack detected in the monitored source">Smart Money activity alone never creates a pack. Packs come only from decoded pump.fun buys.</Empty>
+              <Empty title="No pack detected in the monitored source">No group of wallets bought this token together in the data you are viewing. Smart Money activity alone never creates a pack.</Empty>
             ) : (
               <div className="pack-grid">
                 {data.packs.map((p, i) => (
@@ -93,8 +107,15 @@ export function TokenPage() {
           <section className="section" aria-labelledby="t-context">
             <div className="section-head">
               <h2 className="h2" id="t-context">Token context</h2>
-              <span className="small muted">Latest stored snapshots, each with its own fetch time.</span>
+              <span className="small muted">From Nansen, each with its own fetch time.</span>
             </div>
+            {contextUnchecked ? (
+              <div className="unchecked">
+                <p>
+                  <strong>Nansen token facts and top holders have not been checked yet.</strong> They are fetched for the largest packs while credits allow.
+                </p>
+              </div>
+            ) : (
             <div className="bento">
               <div className="span-5">
                 <TokenInfoCard panel={data.tokenInfo} synthetic={synthetic} />
@@ -103,6 +124,7 @@ export function TokenPage() {
                 <HoldersCard panel={data.holders} synthetic={synthetic} />
               </div>
             </div>
+            )}
           </section>
         </>
       ) : null}

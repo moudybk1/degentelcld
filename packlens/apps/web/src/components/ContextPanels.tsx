@@ -30,11 +30,11 @@ export function TokenInfoCard({ panel, synthetic }: { panel: Panel<TokenInfoData
         </div>
       ) : (
         <p className="small muted" style={{ margin: 0 }}>
-          {panel.state.availability === "unavailable" ? "Token data is unavailable from this source. The pack is retained." : panel.state.availability === "not_requested" ? "Not analyzed yet." : "No token facts to show."}
+          {panel.state.availability === "unavailable" ? "Token data is unavailable from this source. The pack is retained." : panel.state.availability === "not_requested" ? "Not checked yet." : "No token facts to show."}
         </p>
       )}
       <div style={{ marginTop: 14 }}>
-        <PanelStatus state={panel.state} source={synthetic ? "Fixture (synthetic)" : "Nansen token-information"} />
+        <PanelStatus state={panel.state} source={synthetic ? "Example data" : "Nansen token information"} />
       </div>
     </div>
   );
@@ -84,7 +84,7 @@ export function HoldersCard({ panel, synthetic }: { panel: Panel<HoldersData>; s
                         </div>
                       </td>
                       <td className="num">{decimal(h.tokenAmount, 0)}</td>
-                      <td className="num">{share === null ? "—" : `${(share * 100).toFixed(2)}%`}</td>
+                      <td className="num">{share === null ? "n/a" : `${(share * 100).toFixed(2)}%`}</td>
                       <td className="num">{usd(h.valueUsd)}</td>
                     </tr>
                   );
@@ -102,7 +102,7 @@ export function HoldersCard({ panel, synthetic }: { panel: Panel<HoldersData>; s
           {panel.state.availability === "empty"
             ? "No holders were returned in the checked data."
             : panel.state.availability === "not_requested"
-              ? "Not analyzed yet."
+              ? "Not checked yet."
               : panel.state.availability === "unavailable"
                 ? "Holder data is unavailable from this source."
                 : "Holder data is not available."}
@@ -110,7 +110,7 @@ export function HoldersCard({ panel, synthetic }: { panel: Panel<HoldersData>; s
         </p>
       )}
       <div style={{ marginTop: 14 }}>
-        <PanelStatus state={panel.state} source={synthetic ? "Fixture (synthetic)" : "Nansen tgm/holders, premium labels off"} />
+        <PanelStatus state={panel.state} source={synthetic ? "Example data" : "Nansen top holders"} />
       </div>
     </div>
   );
@@ -122,7 +122,8 @@ export function WalletProfileCard({ ctx, mint, synthetic, title }: { ctx: Wallet
   const dex = ctx.dexHistory.data;
   const rel = ctx.related.data;
   const bal = ctx.balance.data;
-  const src = (s: string) => (synthetic ? "Fixture (synthetic)" : s);
+  const src = (s: string) => (synthetic ? "Example data" : s);
+  const deployed = (rel?.related ?? []).filter((r) => /deploy/i.test(r.relation) && /token/i.test(r.label ?? "")).length;
   return (
     <div className="card">
       <div className="card-title">
@@ -144,7 +145,7 @@ export function WalletProfileCard({ ctx, mint, synthetic, title }: { ctx: Wallet
         <div>
           <div className="row" style={{ justifyContent: "space-between" }}>
             <span className="h3" style={{ fontSize: 13.5 }}>
-              PnL summary{pnl ? `, ${dateTimeUtc(pnl.periodStart).split(",")[0]} to ${dateTimeUtc(pnl.periodEnd).split(",")[0]}` : ", 30 days"}
+              Profit and loss{pnl ? `, ${dateTimeUtc(pnl.periodStart).split(",")[0]} to ${dateTimeUtc(pnl.periodEnd).split(",")[0]}` : ", 30 days"}
             </span>
             <PanelStatus state={ctx.pnl.state} compact />
           </div>
@@ -159,7 +160,7 @@ export function WalletProfileCard({ ctx, mint, synthetic, title }: { ctx: Wallet
                 <div className="metric-value" style={{ fontSize: 18 }}>{pct(pnl.winRate, 0)}</div>
               </div>
               <div className="span-3">
-                <div className="stat-label">Sales counted</div>
+                <div className="stat-label">Sells counted</div>
                 <div className="metric-value" style={{ fontSize: 18 }}>{int(pnl.tradedTimes)}</div>
               </div>
               <div className="span-3">
@@ -169,24 +170,24 @@ export function WalletProfileCard({ ctx, mint, synthetic, title }: { ctx: Wallet
             </div>
           ) : (
             <p className="small muted" style={{ margin: "6px 0 0" }}>
-              {ctx.pnl.state.availability === "error" ? "Update delayed: the provider response could not be used." : ctx.pnl.state.availability === "not_requested" ? "Not analyzed yet." : "No PnL data."}
+              {ctx.pnl.state.availability === "error" ? "Update delayed: Nansen's response could not be used." : ctx.pnl.state.availability === "not_requested" ? "Not checked yet." : "No profit and loss data."}
             </p>
           )}
           <p className="tiny muted" style={{ margin: "6px 0 0" }}>
-            Win rate describes this period's sales only; it is not a probability for this token.
+            Win rate describes this period's sells only; it is not a probability for this token.
           </p>
         </div>
 
         <div>
           <div className="row" style={{ justifyContent: "space-between" }}>
-            <span className="h3" style={{ fontSize: 13.5 }}>DEX history, 7 days</span>
+            <span className="h3" style={{ fontSize: 13.5 }}>Recent trades, 7 days</span>
             <PanelStatus state={ctx.dexHistory.state} compact />
           </div>
           {dex && dex.trades.length > 0 ? (
             <>
               <p className="small muted" style={{ margin: "6px 0 8px" }}>
-                {dex.sampleSize} {dex.sampleSize === 1 ? "trade" : "trades"} on the first page
-                {dex.isLastPage === false ? " (more pages exist; this is a sample, not the full history)" : ""}.
+                {dex.sampleSize} {dex.sampleSize === 1 ? "trade" : "trades"} shown
+                {dex.isLastPage === false ? " (a sample; the wallet made more)" : ""}.
               </p>
               <div className="stack" style={{ gap: 6 }}>
                 {dex.trades.slice(0, 5).map((t) => (
@@ -202,7 +203,7 @@ export function WalletProfileCard({ ctx, mint, synthetic, title }: { ctx: Wallet
             </>
           ) : (
             <p className="small muted" style={{ margin: "6px 0 0" }}>
-              {ctx.dexHistory.state.availability === "empty" ? "No DEX trades in the checked period." : ctx.dexHistory.state.availability === "not_requested" ? "Not analyzed yet." : "No trade history available."}
+              {ctx.dexHistory.state.availability === "empty" ? "No DEX trades in the checked period." : ctx.dexHistory.state.availability === "not_requested" ? "Not checked yet." : "No trade history available."}
             </p>
           )}
         </div>
@@ -212,11 +213,21 @@ export function WalletProfileCard({ ctx, mint, synthetic, title }: { ctx: Wallet
             <span className="h3" style={{ fontSize: 13.5 }}>Related wallets</span>
             <PanelStatus state={ctx.related.state} compact />
           </div>
+          {deployed > 0 && (
+            <p className="small deploy-note">
+              <strong>
+                Nansen links this wallet to {deployed} deployed token {deployed === 1 ? "contract" : "contracts"}.
+              </strong>{" "}
+              A wallet that launches tokens and also joins packs is worth a closer look.
+            </p>
+          )}
           {rel && rel.related.length > 0 ? (
             <div className="stack" style={{ gap: 6, marginTop: 8 }}>
               {rel.related.slice(0, 8).map((r) => (
                 <div className="kv small" key={`${r.address}-${r.transactionHash}`}>
-                  <span className="k">{r.relation}</span>
+                  <span className="k" title={relationHelp(r.relation)}>
+                    {r.relation}
+                  </span>
                   <span className="v row" style={{ justifyContent: "flex-end", gap: 6 }}>
                     <Address value={r.address} href={href(`/wallets/solana/${r.address}`)} />
                     {r.isPackMember && <Tag tone="blue">Pack member</Tag>}
@@ -225,7 +236,7 @@ export function WalletProfileCard({ ctx, mint, synthetic, title }: { ctx: Wallet
                 </div>
               ))}
               <p className="tiny muted" style={{ margin: "4px 0 0" }}>
-                Relationships are returned by the provider. A transfer relationship does not prove common ownership.
+                Relationships come from Nansen. A transfer between wallets does not prove they share an owner.
               </p>
             </div>
           ) : (
@@ -237,7 +248,7 @@ export function WalletProfileCard({ ctx, mint, synthetic, title }: { ctx: Wallet
 
         <div>
           <div className="row" style={{ justifyContent: "space-between" }}>
-            <span className="h3" style={{ fontSize: 13.5 }}>Balance follow-up</span>
+            <span className="h3" style={{ fontSize: 13.5 }}>Later balance check</span>
             <PanelStatus state={ctx.balance.state} compact />
           </div>
           {bal ? (
@@ -248,16 +259,16 @@ export function WalletProfileCard({ ctx, mint, synthetic, title }: { ctx: Wallet
                   {ctx.balance.state.fetchedAt ? ` at ${timeUtc(ctx.balance.state.fetchedAt)}` : ""}.
                 </>
               ) : (
-                <>The pack token was not observed on the fetched balance page{ctx.balance.state.fetchedAt ? ` at ${timeUtc(ctx.balance.state.fetchedAt)}` : ""}.</>
+                <>This token was not on the balance page Nansen returned{ctx.balance.state.fetchedAt ? ` at ${timeUtc(ctx.balance.state.fetchedAt)}` : ""}.</>
               )}
-              <span className="muted"> An observed follow-up balance, not a delta or proof of selling.</span>
+              <span className="muted"> A balance observed in a later check, not a change or proof of selling.</span>
             </p>
           ) : (
             <p className="small muted" style={{ margin: "6px 0 0" }}>
               {ctx.balance.state.availability === "budget_paused"
-                ? "Analysis paused before the follow-up ran."
+                ? "Checks paused before the later balance check ran."
                 : ctx.balance.state.availability === "queued"
-                  ? "Scheduled for five minutes after the trigger."
+                  ? "Scheduled for five minutes after the pack formed."
                   : ctx.balance.state.availability === "not_requested"
                     ? "Not scheduled for this wallet."
                     : "No balance data."}
@@ -266,10 +277,19 @@ export function WalletProfileCard({ ctx, mint, synthetic, title }: { ctx: Wallet
         </div>
       </div>
       <div style={{ marginTop: 14 }} className="tiny muted">
-        Sources: {src("Nansen profiler (pnl-summary, dex-trades, related-wallets, current-balance)")}
+        Source: {src("Nansen wallet profiler")}
       </div>
     </div>
   );
+}
+
+/** Plain meaning of Nansen's relationship names, where it is known. */
+function relationHelp(relation: string): string {
+  if (/first funder/i.test(relation)) return "The wallet that first sent SOL to this wallet.";
+  if (/deployed program/i.test(relation)) return "A program or token contract that this wallet deployed.";
+  if (/deployer|deployed by/i.test(relation)) return "The wallet that deployed this one.";
+  if (/sent|received|transfer/i.test(relation)) return "A wallet this one transferred funds with.";
+  return "A relationship reported by Nansen.";
 }
 
 export function MemberLink({ address }: { address: string }) {

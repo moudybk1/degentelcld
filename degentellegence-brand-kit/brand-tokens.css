@@ -1,0 +1,34 @@
+/* Degentellegence / brand tokens v1.0 */
+@font-face {
+  font-family: 'Manrope'; src: url('./fonts/Manrope-Variable.ttf') format('truetype');
+  font-weight: 200 800; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: 'IBM Plex Mono'; src: url('./fonts/IBMPlexMono-Regular.ttf') format('truetype');
+  font-weight: 400; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: 'IBM Plex Mono'; src: url('./fonts/IBMPlexMono-Medium.ttf') format('truetype');
+  font-weight: 500; font-style: normal; font-display: swap;
+}
+:root {
+  --degen-red: #D71920;
+  --degen-white: #FFFFFF;
+  --degen-ink: #4B1015;
+  --degen-wash: #FFF2F2;
+  --degen-muted: #7C484C;
+  --degen-divider: #EBCBCD;
+  --degen-hover: #B5121B;
+  --degen-font: 'Manrope', Arial, sans-serif;
+  --degen-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Consolas, monospace;
+  --degen-space-1: 8px; --degen-space-2: 16px; --degen-space-3: 24px;
+  --degen-space-4: 32px; --degen-space-6: 48px; --degen-space-8: 64px;
+  --degen-radius: 8px;
+}
+.degen-surface { color: var(--degen-ink); background: var(--degen-white); font: 400 1rem/1.5 var(--degen-font); }
+.degen-wordmark { font-family: var(--degen-font); font-weight: 800; letter-spacing: -.03em; color: var(--degen-red); white-space: nowrap; }
+.degen-data { font-family: var(--degen-mono); font-variant-numeric: tabular-nums; }
+.degen-button { min-height: 44px; padding: 12px 20px; border: 1px solid var(--degen-red); border-radius: var(--degen-radius); color: var(--degen-white); background: var(--degen-red); font: 700 14px/20px var(--degen-font); }
+.degen-button:hover { background: var(--degen-hover); border-color: var(--degen-hover); }
+.degen-button:focus-visible { outline: 3px solid var(--degen-ink); outline-offset: 3px; box-shadow: 0 0 0 3px var(--degen-white); }
+.degen-card { padding: 24px; border: 1px solid var(--degen-divider); border-radius: var(--degen-radius); background: var(--degen-white); }
