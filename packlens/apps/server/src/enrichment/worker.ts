@@ -126,13 +126,13 @@ export class EnrichmentWorker {
           "token_holders",
         );
       case "wallet_pnl": {
-        // 30-day window ending at the hourly cache bucket boundary.
-        const to = Math.floor(now / HOUR) * HOUR;
+        // 30-day window ending at 00:00 UTC, so one snapshot serves the wallet all day.
+        const to = Math.floor(now / DAY) * DAY;
         return this.call(PNL_SUMMARY, { chain: "solana", wallet_address: p.wallet!, date: { from: isoNoMillis(to - 30 * DAY), to: isoNoMillis(to) } }, job, "wallet_profile");
       }
       case "wallet_dex": {
-        // 7-day window ending at the 5-minute cache bucket boundary; one page of 100 rows.
-        const to = Math.floor(now / (5 * 60_000)) * (5 * 60_000);
+        // 7-day window ending at the hour boundary (one hour of reuse); one page of 100 rows.
+        const to = Math.floor(now / HOUR) * HOUR;
         return this.call(
           WALLET_DEX_TRADES,
           { chain: "solana", address: p.wallet!, date: { from: isoNoMillis(to - 7 * DAY), to: isoNoMillis(to) }, pagination: { page: 1, per_page: 100 } },
@@ -151,7 +151,10 @@ export class EnrichmentWorker {
         );
       case "sm_token_lookup": {
         const r = await this.smartMoney.targetedLookup(p.mint!, job.id);
-        if (r.ok) return { status: "succeeded", reason: `pages:${r.pages}`, snapshotId: r.snapshotIds[0] ?? null };
+        if (r.ok) {
+          this.netflowIfSmartMoney(job, p.mint!);
+          return { status: "succeeded", reason: `pages:${r.pages}`, snapshotId: r.snapshotIds[0] ?? null };
+        }
         return outcomeFrom({ ok: false, code: r.code as never, message: "", snapshotId: r.snapshotIds[0] ?? null, attemptIds: [], retryable: false });
       }
       case "sm_netflow": {
@@ -160,13 +163,38 @@ export class EnrichmentWorker {
         return outcomeFrom({ ok: false, code: r.code as never, message: "", snapshotId: r.snapshotId, attemptIds: [], retryable: false });
       }
       case "sm_global_feed": {
-        const r = await this.smartMoney.pollGlobalFeed(job.id);
+        const { maxTokenAgeDays = null } = JSON.parse(job.payload_json) as { maxTokenAgeDays?: number | null };
+        const r = await this.smartMoney.pollGlobalFeed(job.id, 100, maxTokenAgeDays);
         if (r.ok) return { status: "succeeded", reason: `new:${r.newObservations}`, snapshotId: r.snapshotIds[0] ?? null };
         return outcomeFrom({ ok: false, code: r.code as never, message: "", snapshotId: null, attemptIds: [], retryable: false });
       }
       default:
         return { status: "failed", reason: "unknown_job_type", snapshotId: null };
     }
+  }
+
+  /**
+   * Nansen netflow is almost always empty for brand-new pump.fun tokens (1 of 27
+   * in the 2026-09-25 live run), so a pack's netflow lookup follows its token
+   * lookup and runs only when Smart Money buyers were observed. Context only:
+   * this never changes packs or which packs are analyzed.
+   */
+  private netflowIfSmartMoney(job: JobRow, mint: string): void {
+    const buyers = this.db
+      .prepare("SELECT COUNT(DISTINCT trader_address) AS n FROM smart_money_observations WHERE namespace = ? AND token_bought_address = ? AND block_time_ms >= ?")
+      .get(job.namespace, mint, this.clock.now() - DAY) as { n: number };
+    if (buyers.n === 0) return;
+    this.queue.enqueue({
+      namespace: job.namespace,
+      campaignId: job.campaign_id,
+      lane: "SMART_MONEY",
+      type: "sm_netflow",
+      subject: mint,
+      packId: job.pack_id,
+      payload: { mint },
+      dedupeKey: `${job.namespace}|${job.pack_id ?? "token"}|sm_netflow|${mint}`,
+      requestedBy: "smart_money_observed",
+    });
   }
 
   private async run(job: JobRow): Promise<void> {

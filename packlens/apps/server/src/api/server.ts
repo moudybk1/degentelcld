@@ -15,6 +15,7 @@ import { cursorSecret } from "./cursor.js";
 import { InvalidInputError, ReadModels } from "./readModels.js";
 import { OperatorAuth, SESSION_COOKIE } from "./auth.js";
 import { handleSse } from "./sse.js";
+import { BusyError, RateLimiter, ReadGate, TtlCache } from "./protect.js";
 import { listManifests } from "../replay/dataset.js";
 import { latestOutboxSequence } from "../ingest/outbox.js";
 import { DECODER_VERSION } from "../collector/decoder.js";
@@ -34,16 +35,66 @@ class HttpError extends Error {
 
 const ANALYTICS_EVENTS = ["radar_viewed", "pack_opened", "wallet_opened", "evidence_opened", "smart_money_panel_viewed", "data_state_visible"] as const;
 
+/** Public hosting limits (PUBLIC_HOSTING=true). */
+const PUBLIC_LIMITS = {
+  apiPerMinute: 600,
+  analyticsPerMinute: 30,
+  analyticsPerDay: 20_000,
+  streamsPerClient: 6,
+  streamsTotal: 1000,
+  readCacheMs: 5000,
+  /** Heavy reads waiting for the gate before new ones get 503. */
+  maxQueuedReads: 64,
+};
+
 export function buildServer(runtime: Runtime, opts: { webDist?: string | null; logger?: boolean } = {}): FastifyInstance {
-  const app = Fastify({ logger: opts.logger ?? false, forceCloseConnections: true, genReqId: () => randomUUID(), bodyLimit: 64 * 1024, trustProxy: false });
+  const app = Fastify({ logger: opts.logger ?? false, forceCloseConnections: true, genReqId: () => randomUUID(), bodyLimit: 64 * 1024, trustProxy: runtime.config.trustProxy });
   const db = runtime.db;
   const read = new ReadModels(db, runtime.clock, runtime.config, runtime.outbox, cursorSecret(db));
   const auth = new OperatorAuth(runtime.config.adminToken, runtime.clock, runtime.config.secureCookies, runtime.config.allowedOrigins);
   void app.register(cookie);
 
+  const pub = runtime.config.publicHosting;
+  const gate = new ReadGate(PUBLIC_LIMITS.maxQueuedReads);
+  const readCache = new TtlCache<unknown>(1000, Date.now);
+  const apiLimiter = pub ? new RateLimiter(PUBLIC_LIMITS.apiPerMinute, 60_000, Date.now) : null;
+  const analyticsLimiter = pub ? new RateLimiter(PUBLIC_LIMITS.analyticsPerMinute, 60_000, Date.now) : null;
+  const analyticsDay = { day: -1, count: 0 };
+  const streams = { total: 0, byClient: new Map<string, number>() };
+
+  /**
+   * Heavy reads run through the gate, one at a time between event-loop turns.
+   * With public hosting, results are shared for a few seconds per `key`.
+   */
+  const heavyRead = async <T>(key: string, compute: () => T): Promise<T> => {
+    if (pub) {
+      const hit = readCache.get(key);
+      if (hit !== undefined) return hit as T;
+    }
+    const value = await gate.run(compute);
+    if (pub) readCache.set(key, value, PUBLIC_LIMITS.readCacheMs);
+    return value;
+  };
+  const queryKey = (req: FastifyRequest) => req.url;
+
+  if (apiLimiter) {
+    app.addHook("onRequest", async (req, reply) => {
+      if (!req.url.startsWith("/api/") || req.url.startsWith("/api/health") || req.url.startsWith("/api/analytics")) return;
+      const retry = apiLimiter.hit(req.ip);
+      if (retry !== null) {
+        void reply.header("Retry-After", String(retry));
+        throw new HttpError(429, "RATE_LIMITED", "Too many requests. Wait a moment and try again.", true);
+      }
+    });
+  }
+
   app.setErrorHandler((err, req, reply) => {
     if (err instanceof HttpError) {
       void reply.status(err.status).send({ error: { code: err.code, message: err.message, retryable: err.retryable, requestId: req.id } } satisfies ApiError);
+      return;
+    }
+    if (err instanceof BusyError) {
+      void reply.header("Retry-After", "2").status(503).send({ error: { code: "RATE_LIMITED", message: err.message, retryable: true, requestId: req.id } } satisfies ApiError);
       return;
     }
     if (err instanceof InvalidInputError) {
@@ -118,7 +169,7 @@ export function buildServer(runtime: Runtime, opts: { webDist?: string | null; l
 
   app.get("/api/status", async (req) => {
     const { namespace, mode } = resolveNamespace(req);
-    return envelope(req, "status.v1", namespace, mode, runtime.status(namespace));
+    return envelope(req, "status.v1", namespace, mode, await heavyRead(`status|${namespace}`, () => runtime.status(namespace)));
   });
 
   const ListQuery = z.object({
@@ -157,8 +208,7 @@ export function buildServer(runtime: Runtime, opts: { webDist?: string | null; l
   app.get("/api/packs", async (req, reply) => {
     const { namespace, mode } = resolveNamespace(req);
     const { q, filters } = parseRadarQuery(req);
-    const seq = latestOutboxSequence(db);
-    const data = read.listPacks(namespace, filters, q.cursor ?? null, q.limit);
+    const { seq, data } = await heavyRead(queryKey(req), () => ({ seq: latestOutboxSequence(db), data: read.listPacks(namespace, filters, q.cursor ?? null, q.limit) }));
     void reply.header("X-Outbox-Sequence", String(seq));
     return { ...envelope(req, "pack-list.v1", namespace, mode, data), sequence: seq };
   });
@@ -166,7 +216,7 @@ export function buildServer(runtime: Runtime, opts: { webDist?: string | null; l
   app.get("/api/overview", async (req) => {
     const { namespace, mode } = resolveNamespace(req);
     const { filters } = parseRadarQuery(req);
-    return envelope(req, "radar-overview.v1", namespace, mode, read.overview(namespace, filters));
+    return envelope(req, "radar-overview.v1", namespace, mode, await heavyRead(queryKey(req), () => read.overview(namespace, filters)));
   });
 
   app.get("/api/packs/after", async (req) => {
@@ -174,14 +224,14 @@ export function buildServer(runtime: Runtime, opts: { webDist?: string | null; l
     const ids = raw.split(",").filter(Boolean);
     if (ids.length === 0 || ids.length > 50 || !ids.every((id) => /^[0-9a-f]{64}$/.test(id))) throw new HttpError(400, "INVALID_INPUT", "Provide 1 to 50 pack IDs.");
     const { namespace, mode } = resolveNamespace(req);
-    return envelope(req, "pack-after-summary.v1", namespace, mode, { items: read.afterSummaries(ids), asOf: new Date(runtime.clock.now()).toISOString() });
+    const data = await heavyRead(queryKey(req), () => ({ items: read.afterSummaries(ids), asOf: new Date(runtime.clock.now()).toISOString() }));
+    return envelope(req, "pack-after-summary.v1", namespace, mode, data);
   });
 
   app.get("/api/packs/:id", async (req, reply) => {
     const { id } = req.params as { id: string };
     if (!/^[0-9a-f]{64}$/.test(id)) throw new HttpError(400, "INVALID_INPUT", "Invalid pack ID.");
-    const seq = latestOutboxSequence(db);
-    const detail = read.packDetail(id);
+    const { seq, detail } = await heavyRead(`pack|${id}`, () => ({ seq: latestOutboxSequence(db), detail: read.packDetail(id) }));
     if (!detail) throw new HttpError(404, "NOT_FOUND", "Pack not found.");
     const requested = (req.query as Record<string, unknown>).namespace;
     if (typeof requested === "string" && requested !== detail.core.namespace) throw new HttpError(404, "NOT_FOUND", "Pack not found in this namespace.");
@@ -193,10 +243,21 @@ export function buildServer(runtime: Runtime, opts: { webDist?: string | null; l
   app.get("/api/packs/:id/smart-money/evidence", async (req) => {
     const { id } = req.params as { id: string };
     if (!/^[0-9a-f]{64}$/.test(id)) throw new HttpError(400, "INVALID_INPUT", "Invalid pack ID.");
-    const data = read.packSmartMoneyEvidence(id);
+    const data = await heavyRead(`pack-sm|${id}`, () => read.packSmartMoneyEvidence(id));
     if (!data) throw new HttpError(404, "NOT_FOUND", "Pack not found.");
     const p = db.prepare("SELECT namespace FROM packs WHERE id = ?").get(id) as { namespace: string };
     return envelope(req, "pack-smart-money-evidence.v1", p.namespace, read.namespaceMode(p.namespace)!, data);
+  });
+
+  app.get("/api/wallets/repeat", async (req) => {
+    const { namespace, mode } = resolveNamespace(req);
+    const q = z
+      .object({ active: z.enum(["24h", "7d", "all"]).default("24h"), minPacks: z.coerce.number().int().min(2).max(1000).default(3), limit: z.coerce.number().int().min(1).max(100).default(50) })
+      .safeParse(req.query);
+    if (!q.success) throw new HttpError(400, "INVALID_INPUT", "Choose active 24h, 7d, or all, minPacks of at least 2, and a limit up to 100.");
+    const hours = q.data.active === "24h" ? 24 : q.data.active === "7d" ? 168 : null;
+    const data = await heavyRead(queryKey(req), () => read.repeatWallets(namespace, { activeWithinHours: hours, minPacks: q.data.minPacks, limit: q.data.limit }));
+    return envelope(req, "repeat-wallets.v1", namespace, mode, data);
   });
 
   app.get("/api/wallets/:chain/:address", async (req) => {
@@ -204,7 +265,7 @@ export function buildServer(runtime: Runtime, opts: { webDist?: string | null; l
     if (chain !== "solana") throw new HttpError(400, "INVALID_INPUT", "Only Solana is supported.");
     if (!isSolanaAddress(address)) throw new HttpError(400, "INVALID_INPUT", "Invalid Solana wallet address.");
     const { namespace, mode } = resolveNamespace(req);
-    return envelope(req, "wallet.v1", namespace, mode, read.walletPage(namespace, address));
+    return envelope(req, "wallet.v1", namespace, mode, await heavyRead(queryKey(req), () => read.walletPage(namespace, address)));
   });
 
   app.get("/api/tokens/:chain/:address", async (req) => {
@@ -212,7 +273,7 @@ export function buildServer(runtime: Runtime, opts: { webDist?: string | null; l
     if (chain !== "solana") throw new HttpError(400, "INVALID_INPUT", "Only Solana is supported.");
     if (!isSolanaAddress(address)) throw new HttpError(400, "INVALID_INPUT", "Invalid Solana token address.");
     const { namespace, mode } = resolveNamespace(req);
-    return envelope(req, "token.v1", namespace, mode, read.tokenPage(namespace, address));
+    return envelope(req, "token.v1", namespace, mode, await heavyRead(queryKey(req), () => read.tokenPage(namespace, address)));
   });
 
   app.get("/api/tokens/:chain/:address/image", async (req, reply) => {
@@ -236,18 +297,37 @@ export function buildServer(runtime: Runtime, opts: { webDist?: string | null; l
     const { namespace, mode } = resolveNamespace(req);
     const q = (req.query as { q?: unknown }).q;
     if (typeof q !== "string" || q.length > 200) throw new HttpError(400, "INVALID_INPUT", "Provide a search text of at most 200 characters.");
-    return envelope(req, "search.v1", namespace, mode, read.search(namespace, q));
+    return envelope(req, "search.v1", namespace, mode, await heavyRead(queryKey(req), () => read.search(namespace, q)));
   });
 
   app.get("/api/smart-money/activity", async (req) => {
     const { namespace, mode } = resolveNamespace(req);
-    const q = req.query as { cursor?: string; token?: string };
+    const q = req.query as { cursor?: string; token?: string; pumpfun?: string };
     if (q.token !== undefined && !isSolanaAddress(q.token)) throw new HttpError(400, "INVALID_INPUT", "Invalid token address.");
-    return envelope(req, "smart-money-activity.v1", namespace, mode, read.smartMoneyActivity(namespace, q.cursor ?? null, q.token ?? null));
+    if (q.pumpfun !== undefined && q.pumpfun !== "1" && q.pumpfun !== "0") throw new HttpError(400, "INVALID_INPUT", "pumpfun must be 1 or 0.");
+    return envelope(req, "smart-money-activity.v1", namespace, mode, await heavyRead(queryKey(req), () => read.smartMoneyActivity(namespace, q.cursor ?? null, q.token ?? null, 50, q.pumpfun === "1")));
   });
 
   app.get("/api/events", async (req, reply) => {
     const { namespace } = resolveNamespace(req);
+    if (pub) {
+      const mine = streams.byClient.get(req.ip) ?? 0;
+      if (mine >= PUBLIC_LIMITS.streamsPerClient || streams.total >= PUBLIC_LIMITS.streamsTotal) {
+        void reply.header("Retry-After", "30");
+        throw new HttpError(429, "RATE_LIMITED", "Too many live connections. Close other tabs and try again.", true);
+      }
+      streams.total++;
+      streams.byClient.set(req.ip, mine + 1);
+      let released = false;
+      reply.raw.on("close", () => {
+        if (released) return;
+        released = true;
+        streams.total--;
+        const n = (streams.byClient.get(req.ip) ?? 1) - 1;
+        if (n <= 0) streams.byClient.delete(req.ip);
+        else streams.byClient.set(req.ip, n);
+      });
+    }
     handleSse(runtime, req, reply, namespace);
   });
 
@@ -256,6 +336,16 @@ export function buildServer(runtime: Runtime, opts: { webDist?: string | null; l
       .object({ name: z.enum(ANALYTICS_EVENTS), screen: z.string().max(40), packId: z.string().regex(/^[0-9a-f]{64}$/).nullable().optional(), namespace: z.string().max(200).optional() })
       .safeParse(req.body);
     if (!body.success) throw new HttpError(400, "INVALID_INPUT", "Invalid analytics event.");
+    if (analyticsLimiter) {
+      // Anonymous writes: past the per-client or daily limit they are accepted and dropped.
+      const day = Math.floor(Date.now() / 86_400_000);
+      if (analyticsDay.day !== day) Object.assign(analyticsDay, { day, count: 0 });
+      if (analyticsLimiter.hit(req.ip) !== null || analyticsDay.count >= PUBLIC_LIMITS.analyticsPerDay) {
+        void reply.status(204);
+        return null;
+      }
+      analyticsDay.count++;
+    }
     const mode = read.namespaceMode(body.data.namespace ?? runtime.primaryNamespace) ?? runtime.config.mode;
     db.prepare("INSERT INTO analytics_events (name, mode, screen, pack_id, created_at_ms) VALUES (?, ?, ?, ?, ?)").run(body.data.name, mode, body.data.screen, body.data.packId ?? null, runtime.clock.now());
     void reply.status(204);
@@ -347,6 +437,9 @@ export function buildServer(runtime: Runtime, opts: { webDist?: string | null; l
         configVersion: runtime.config.detector.version,
         decoderVersion: DECODER_VERSION,
         smartMoneyEnabled: runtime.config.smartMoney.enabled,
+        smartMoneyFeedEnabled: runtime.config.smartMoney.feedEnabled,
+        priceProvider: runtime.config.price.provider,
+        nansenMode: runtime.config.nansen.continuous ? "continuous" : runtime.config.nansen.sessionEndAtMs !== null ? "session" : "off",
         smartMoneyPollSeconds: runtime.config.smartMoney.pollSeconds,
         priceRefreshSeconds: runtime.config.price.refreshSeconds,
         enrichmentAutoPacksPerCycle: runtime.config.enrichment.autoPacksPerCycle,

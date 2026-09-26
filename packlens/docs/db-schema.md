@@ -1,6 +1,6 @@
 # PackLens database schema
 
-Generated from `migrations/` (0001_init.sql, 0002_price_policy.sql, 0003_token_lifecycle.sql, 0004_query_indexes.sql, 0005_token_images.sql) by `npm run db:schema-doc`. Do not edit by hand.
+Generated from `migrations/` (0001_init.sql, 0002_price_policy.sql, 0003_token_lifecycle.sql, 0004_query_indexes.sql, 0005_token_images.sql, 0006_pyth_price.sql, 0007_wallet_pack_stats.sql) by `npm run db:schema-doc`. Do not edit by hand.
 
 SQLite runs in WAL mode with foreign keys enabled on every connection. Namespaces (`live:`, `fixture:`, `replay:`) isolate data; composite foreign keys keep references inside one namespace.
 
@@ -211,7 +211,7 @@ Indexes: `outbox_namespace_sequence`
 
 Foreign keys: (campaign_id) → `api_campaigns`(id); (namespace) → `namespaces`(id)
 
-Indexes: `jobs_pack`, `jobs_dispatch`
+Indexes: `jobs_subject`, `jobs_pack`, `jobs_dispatch`
 
 ## `meta`
 
@@ -287,6 +287,7 @@ Foreign keys: (pack_id, namespace) → `packs`(id, namespace)
 | `relationship_wallets_json` | TEXT | no |  |  |
 | `scheduled_at_ms` | INTEGER | yes |  |  |
 | `created_at_ms` | INTEGER | no |  |  |
+| `extra_profile_wallets_json` | TEXT | no |  | '[]' |
 
 Foreign keys: (pack_id, namespace) → `packs`(id, namespace)
 
@@ -590,8 +591,23 @@ Foreign keys: (price_snapshot_id, namespace) → `price_snapshots`(id, namespace
 
 Indexes: `trade_events_price_snapshot`, `trade_events_time`, `trade_events_normalized`, `trade_events_pending`, `trade_events_signature`, `trade_events_wallet_time`, `trade_events_token_time`
 
+## `wallet_pack_stats`
+
+| Column | Type | Null | Key | Default |
+|---|---|---|---|---|
+| `namespace` | TEXT | no | PK |  |
+| `wallet` | TEXT | no | PK |  |
+| `packs` | INTEGER | no |  |  |
+| `first_seen_ms` | INTEGER | no |  |  |
+| `last_seen_ms` | INTEGER | no |  |  |
+
+Foreign keys: (namespace) → `namespaces`(id)
+
+Indexes: `wallet_pack_stats_recent`, `wallet_pack_stats_rank`
+
 ## Immutability triggers
 
 - `enrichment_snapshots_no_update` on `enrichment_snapshots`: updates are rejected; new responses create new rows.
+- `pack_members_wallet_stats` on `pack_members`: updates are rejected; new responses create new rows.
 - `price_snapshots_no_update` on `price_snapshots`: updates are rejected; new responses create new rows.
 - `token_sm_metrics_no_update` on `token_smart_money_metrics`: updates are rejected; new responses create new rows.

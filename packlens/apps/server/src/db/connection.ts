@@ -18,6 +18,9 @@ export function openDatabase(path: string): Db {
 
 export type MigrationResult = { applied: string[]; alreadyApplied: string[] };
 
+/** First-line marker for a migration that rebuilds a referenced table. */
+const FOREIGN_KEYS_OFF = /^-- packlens: foreign-keys-off\n/;
+
 /**
  * Versioned, checksummed migrations. An already-applied migration whose file
  * content changed is a hard error: applied migrations are never edited.
@@ -46,10 +49,28 @@ export function migrate(db: Db, migrationsDir: string, nowMs: number): Migration
       result.alreadyApplied.push(file);
       continue;
     }
-    db.transaction(() => {
-      db.exec(sql);
+    const record = () =>
       db.prepare("INSERT INTO schema_migrations (version, name, checksum, applied_at_ms) VALUES (?, ?, ?, ?)").run(version, file, checksum, nowMs);
-    })();
+    if (FOREIGN_KEYS_OFF.test(sql)) {
+      // Table rebuilds (sqlite.org/lang_altertable.html#otheralter): foreign keys can only be
+      // switched outside a transaction, and every reference is re-checked before the commit.
+      db.pragma("foreign_keys = OFF");
+      try {
+        db.transaction(() => {
+          db.exec(sql);
+          const violations = db.pragma("foreign_key_check") as unknown[];
+          if (violations.length > 0) throw new Error(`Migration ${file} would leave ${violations.length} foreign key violations`);
+          record();
+        })();
+      } finally {
+        db.pragma("foreign_keys = ON");
+      }
+    } else {
+      db.transaction(() => {
+        db.exec(sql);
+        record();
+      })();
+    }
     result.applied.push(file);
   }
   return result;

@@ -1,6 +1,7 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { Info } from "@phosphor-icons/react";
 import { GLOSSARY, type GlossaryKey } from "../lib/glossary";
+import { ruleText, useRule } from "../lib/rule";
 
 /**
  * Accessible explanation next to a number: opens on hover, keyboard focus, or
@@ -9,7 +10,8 @@ import { GLOSSARY, type GlossaryKey } from "../lib/glossary";
  */
 export function InfoTip({ k, text, label }: { k?: GlossaryKey; text?: string; label?: string }) {
   const entry = k ? GLOSSARY[k] : null;
-  const body = text ?? entry?.text ?? "";
+  const rule = useRule();
+  const body = ruleText(text ?? entry?.text ?? "", rule);
   const name = label ?? entry?.term ?? "this value";
   const [open, setOpen] = useState(false);
   const [pinned, setPinned] = useState(false);

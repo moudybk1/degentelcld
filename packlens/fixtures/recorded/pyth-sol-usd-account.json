@@ -1,0 +1,16 @@
+{
+  "description": "Real getAccountInfo result for Pyth SOL/USD sponsored price account (shard 0) on Solana mainnet, captured 2026-09-26 by PackLens for decoder tests.",
+  "account": "7UVimffxr9ow1uXYxsr4LHAcV58mLzhmwaeKvJ1pjLiE",
+  "contextSlot": 450570214,
+  "value": {
+    "data": [
+      "IvEjY51+9M1gMUcENA3t3zcf1CRyFI8kjp0abRpesqw6zYt/1dayQwHvDYtv2izrpB2hXUCV0do5Kg0vjtDGx7wPTPrIwoC1bWXbp84CAAAAkEwXAAAAAAD4////JU23agAAAAAkTbdqAAAAAKjUltACAAAAWO4VAAAAAAClJ9saAAAAAAA=",
+      "base64"
+    ],
+    "executable": false,
+    "lamports": 1825031,
+    "owner": "rec5EKMGg6MxZYaMdyBfgwp4d5rB9T1VQH5pJv5LtFJ",
+    "rentEpoch": 18446744073709551615,
+    "space": 134
+  }
+}

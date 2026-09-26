@@ -1,6 +1,7 @@
 import { Link } from "react-router";
 import { ChartLineUp, Receipt, UsersThree, X } from "@phosphor-icons/react";
 import { useNsHref } from "../state/namespace";
+import { ruleUsd, useRule } from "../lib/rule";
 
 /**
  * What a pack is, in three steps, and what it can and cannot tell you. Shown
@@ -8,6 +9,7 @@ import { useNsHref } from "../state/namespace";
  */
 export function HowItWorks({ onDismiss }: { onDismiss: () => void }) {
   const href = useNsHref();
+  const rule = useRule();
   return (
     <section className="how" aria-labelledby="how-title">
       <header className="how-head">
@@ -25,7 +27,8 @@ export function HowItWorks({ onDismiss }: { onDismiss: () => void }) {
           </span>
           <strong>Wallets buy together</strong>
           <span>
-            A <em>pack</em> forms when 3 or more different wallets each buy at least $20 of the same pump.fun token within 20 seconds. Wallets that buy in the next 40 seconds join it.
+            A <em>pack</em> forms when {rule.minUniqueWallets} or more different wallets each buy at least {ruleUsd(rule)} of the same pump.fun token within {rule.triggerWindowSeconds} seconds.
+            Wallets that buy in the next {rule.expansionSeconds} seconds join it.{rule.isBaseline ? "" : " This site runs a custom rule; the spec baseline is 3 wallets and $20."}
           </span>
         </li>
         <li>

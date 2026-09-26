@@ -11,6 +11,7 @@ import { HoldersCard, TokenInfoCard, WalletProfileCard } from "../components/Con
 import { AfterSection, EarlierPacksTable, ReadoutPanel } from "../components/AfterSection";
 import { PackGlance } from "../components/PackGlance";
 import { packLead } from "../lib/packFacts";
+import { ruleUsd, useRule } from "../lib/rule";
 import { InfoTip } from "../components/InfoTip";
 import { Address, Empty, ErrorNote, ExtLink, KV, LoadingBlock, ModeBadge, Note, Reveal, Stat, Tag, TokenAvatar, useRowLimit, type FromState } from "../components/ui";
 import { dateTimeUtc, pct, rawAmount, relative, seconds, timeUtc, titleCase, usd } from "../lib/format";
@@ -61,6 +62,7 @@ export function PackDetailPage() {
   const { id = "" } = useParams();
   const href = useNsHref();
   const now = useNow(5000);
+  const rule = useRule();
   const { data, meta, error, loading, reload } = useApi<PackDetail>(`/api/packs/${id}`);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const memberRows = useRowLimit(data?.members ?? [], 25);
@@ -133,6 +135,12 @@ export function PackDetailPage() {
   const matchByWallet = new Map(d.smartMoney.packConfirmation.memberMatches.map((m) => [m.walletAddress, m]));
   const analysis = analysisLabel(d.assessment.analysisState);
   const profileWallets = new Set(d.context.selectedProfileWallets);
+  const profileTitle = (wallet: string): string => {
+    const extra = d.context.extraProfileWallets.find((x) => x.wallet === wallet);
+    if (extra?.reason === "largest_buyer") return "Largest buyer";
+    if (extra) return `Seen in ${extra.earlierPacks} earlier pack${extra.earlierPacks === 1 ? "" : "s"}`;
+    return d.members.some((m) => m.walletAddress === wallet && m.memberKind === "initial") ? "Started the pack" : "Joined later";
+  };
   const smChecked = d.members.some((m) => (matchByWallet.get(m.walletAddress)?.matchState ?? "not_checked") !== "not_checked");
   const fromHere: FromState = { from: { label: tokenName, href: href(`/packs/${d.core.id}`) } };
 
@@ -206,7 +214,7 @@ export function PackDetailPage() {
               Pack at a glance
             </h2>
             <p className="small muted">
-              <strong>{packLead(d.core, d.patterns)}</strong> These answers come from the observed trades and describe what happened, not what the price will do next.
+              <strong>{packLead(d.core, d.patterns, ruleUsd(rule))}</strong> These answers come from the observed trades and describe what happened, not what the price will do next.
             </p>
           </div>
           <PackGlance detail={d} />
@@ -353,7 +361,9 @@ export function PackDetailPage() {
                         <span title={`Snapshot ${e.priceSnapshotId ?? "n/a"} · ${e.priceSource ?? ""}`}>
                           SOL {usd(e.quoteUsdPrice)}{" "}
                           <span className="muted">
-                            · {e.priceSource?.includes(":5m:") ? "5m" : "1m"} candle {e.quotePriceAtMs ? timeUtc(e.quotePriceAtMs).replace(":00 UTC", " UTC") : "n/a"}
+                            {e.priceSource?.startsWith("pyth:")
+                              ? `· Pyth ${e.quotePriceAtMs ? timeUtc(e.quotePriceAtMs) : "n/a"}`
+                              : `· ${e.priceSource?.includes(":5m:") ? "5m" : "1m"} candle ${e.quotePriceAtMs ? timeUtc(e.quotePriceAtMs).replace(":00 UTC", " UTC") : "n/a"}`}
                           </span>
                         </span>
                       ) : (
@@ -385,7 +395,9 @@ export function PackDetailPage() {
         </div>
         {evidenceRows.toggle}
         <p className="tiny muted" style={{ marginTop: 10 }}>
-          USD values multiply the SOL paid (fees excluded) by Nansen's SOL price from a recent closed candle, fixed when each buy arrived. They are estimates.
+          {d.evidence.some((e) => e.priceSource?.startsWith("pyth:"))
+            ? "USD values multiply the SOL paid (fees excluded) by Pyth's on-chain SOL/USD price published before each buy, fixed when the buy arrived. They are estimates."
+            : "USD values multiply the SOL paid (fees excluded) by Nansen's SOL price from a recent closed candle, fixed when each buy arrived. They are estimates."}
         </p>
       </section>
 
@@ -415,7 +427,9 @@ export function PackDetailPage() {
           <div>
             <h2 className="h2" id="sec-context">Wallet and token context</h2>
             <p className="muted small" style={{ margin: "6px 0 0" }}>
-              Nansen profiles the first {d.context.selectedProfileWallets.length} wallets that started the pack, and checks relationships and later balances for the first {d.context.selectedRelationshipWallets.length}. Other wallets are not profiled automatically.
+              Nansen profiles the first {d.context.selectedProfileWallets.length} wallets that started the pack and checks relationships for the first {d.context.selectedRelationshipWallets.length}
+              {d.context.extraProfileWallets.length > 0 ? ", plus the largest buyer and the wallet seen in the most earlier packs" : ""}. A wallet profiled in the last day is reused, not fetched again.
+              Whether wallets still hold comes from on-chain trades in After the pack.
             </p>
           </div>
           <div className="row" style={{ gap: 8 }}>
@@ -446,7 +460,7 @@ export function PackDetailPage() {
           <div className="pack-grid" style={{ marginTop: 14 }}>
             {d.context.wallets.map((w, i) => (
               <Reveal key={w.walletAddress} index={i}>
-                <WalletProfileCard ctx={w} mint={d.core.tokenAddress} synthetic={synthetic} title={initial.some((m) => m.walletAddress === w.walletAddress) ? "Started the pack" : "Joined later"} />
+                <WalletProfileCard ctx={w} mint={d.core.tokenAddress} synthetic={synthetic} title={profileTitle(w.walletAddress)} />
               </Reveal>
             ))}
           </div>
@@ -532,6 +546,7 @@ export function PackDetailPage() {
               <KV k="SOL price source">
                 {(() => {
                   const src = d.evidence.find((e) => e.priceSource)?.priceSource ?? "";
+                  if (src.startsWith("pyth:")) return "pyth-onchain-v1 (Pyth on-chain SOL/USD)";
                   const v = /nansen-(1m|5m)-closed-v1/.exec(src)?.[0];
                   return v ? `${v}${v.includes("5m") ? " (documented fallback)" : " (baseline)"}` : src.includes(":5m:") ? "5m closed candles" : "1m closed candles";
                 })()}

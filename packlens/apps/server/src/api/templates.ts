@@ -4,6 +4,7 @@
  * sentence are separate so context never reads as part of the detection.
  */
 import type { Pack, PackSmartMoneyContext, PatternMetrics, SmartMoneyWindowMetric } from "@packlens/contracts";
+import { BASELINE_DETECTOR_CONFIG, detectorConfigForVersion } from "../config.js";
 import { parseDecimal } from "../lib/decimal.js";
 
 export function formatUsd(value: string): string {
@@ -20,10 +21,11 @@ function seconds(ms: number): string {
 }
 
 export function packSentence(core: Pack, patterns: PatternMetrics): string {
+  const min = formatUsd((detectorConfigForVersion(core.configVersion) ?? BASELINE_DETECTOR_CONFIG).minTradeUsd);
   const parts = [
     patterns.initialEntrySpanMs === 0
-      ? `${core.initialWalletCount} wallets each bought $20 or more in the same second.`
-      : `${core.initialWalletCount} wallets each bought $20 or more within ${seconds(patterns.initialEntrySpanMs)} seconds.`,
+      ? `${core.initialWalletCount} wallets each bought ${min} or more in the same second.`
+      : `${core.initialWalletCount} wallets each bought ${min} or more within ${seconds(patterns.initialEntrySpanMs)} seconds.`,
   ];
   if (core.totalWalletCount > core.initialWalletCount) {
     parts.push(`${core.totalWalletCount - core.initialWalletCount} more joined later (${core.totalWalletCount} in total).`);

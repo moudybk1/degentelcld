@@ -130,7 +130,7 @@ describe("live flow with a fake provider", () => {
 
     await vi.waitFor(
       () => {
-        const pending = rt.db.prepare("SELECT COUNT(*) AS n FROM jobs WHERE status IN ('queued','running') AND type <> 'balance_followup'").get() as { n: number };
+        const pending = rt.db.prepare("SELECT COUNT(*) AS n FROM jobs WHERE status IN ('queued','running') ").get() as { n: number };
         expect(pending.n).toBe(0);
       },
       { timeout: 10_000, interval: 100 },
@@ -156,15 +156,12 @@ describe("live flow with a fake provider", () => {
     expect(usage.credits.unresolved).toBe(0);
     for (const l of fake.log) expect(JSON.stringify(l.body)).not.toContain('"apikey"');
 
-    // Balance follow-up waits for trigger + 5 minutes.
-    const followups = rt.db.prepare("SELECT status FROM jobs WHERE type = 'balance_followup'").all() as { status: string }[];
-    expect(followups.every((f) => f.status === "queued")).toBe(true);
-    clock.set(START + 6 * 60_000);
-    await vi.waitFor(() => {
-      const f = rt.db.prepare("SELECT COUNT(*) AS n FROM jobs WHERE type = 'balance_followup' AND status = 'succeeded'").get() as { n: number };
-      expect(f.n).toBe(2);
-    }, { timeout: 10_000, interval: 100 });
-    const detail2 = (await app.inject({ url: `/api/packs/${packId}` })).json().data;
-    expect(detail2.assessment.analysisState).toBe("complete");
+    // No paid 5-minute balance check: holding versus selling comes from on-chain trades.
+    expect(rt.db.prepare("SELECT COUNT(*) AS n FROM jobs WHERE type = 'balance_followup'").get()).toEqual({ n: 0 });
+    // Netflow followed the token lookup because Smart Money buyers were observed.
+    expect(rt.db.prepare("SELECT requested_by, status FROM jobs WHERE type = 'sm_netflow'").all()).toEqual([{ requested_by: "smart_money_observed", status: "succeeded" }]);
+    // All three members are the spec's profiled wallets, so no extra profile is needed.
+    expect(detail.context.extraProfileWallets).toEqual([]);
+    expect(detail.assessment.analysisState).toBe("complete");
   });
 });

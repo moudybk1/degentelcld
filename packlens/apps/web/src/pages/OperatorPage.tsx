@@ -148,6 +148,15 @@ export function OperatorPage() {
                     <KV k="Ends">{data.session.endsAt ? `${dateTimeUtc(data.session.endsAt)} (${relative(data.session.endsAt, now)})` : "n/a"}</KV>
                     <KV k="Smart Money ends">{data.session.smartMoneyEndsAt ? dateTimeUtc(data.session.smartMoneyEndsAt) : "n/a"}</KV>
                     <KV k="Configured maximum">{data.session.configuredMaxEnd ? dateTimeUtc(data.session.configuredMaxEnd) : "Not set"}</KV>
+                    <KV k="Nansen mode">
+                      {data.config.nansenMode === "continuous"
+                        ? "Continuous, renewed each UTC day under the daily cap"
+                        : data.config.nansenMode === "off"
+                          ? "Off (no session end or daily cap set)"
+                          : "Bounded session"}
+                    </KV>
+                    <KV k="SOL price">{data.config.priceProvider === "pyth" ? "Pyth on-chain (no credits)" : "Nansen candles"}</KV>
+                    <KV k="Smart Money feed">{data.config.smartMoneyFeedEnabled ? `Every ${data.config.smartMoneyPollSeconds} s` : "Off (per-pack lookups only)"}</KV>
                   </div>
                   {mode === "live" ? (
                     <div className="row" style={{ gap: 8, marginTop: 16 }}>
@@ -189,6 +198,11 @@ export function OperatorPage() {
                     <div className="span-3"><Stat label="Unresolved" value={int(data.usage.credits.unresolved)} note="Unknown cost; kept until reconciled" /></div>
                     <div className="span-3"><Stat label="Available" value={data.usage.credits.available === null ? "n/a" : int(data.usage.credits.available)} note={`Price reserve ${data.usage.credits.priceReserve}`} /></div>
                   </div>
+                  {data.usage.credits.dailyCap !== null && (
+                    <p className="small" style={{ margin: "14px 0 0" }}>
+                      Today: {int(data.usage.credits.usedToday)} of {int(data.usage.credits.dailyCap)} credits (daily cap, resets at 00:00 UTC).
+                    </p>
+                  )}
                   <p className="tiny muted" style={{ margin: "14px 0 0" }}>
                     Account balance last reported by Nansen: {data.usage.credits.lastReportedRemaining === null ? "not reported yet" : int(data.usage.credits.lastReportedRemaining)}. The budget limits credits, never the number of calls.
                   </p>
@@ -308,7 +322,10 @@ export function OperatorPage() {
                     <KV k="Gaps (open / total)">
                       {data.status.openGaps} / {data.status.totalGaps}
                     </KV>
-                    <KV k="Price feed">{data.status.price.state.replace(/_/g, " ")}{data.status.price.latestCandleStart ? ` · candle ${timeUtc(data.status.price.latestCandleStart)}` : ""}</KV>
+                    <KV k="Price feed">
+                      {data.status.price.state.replace(/_/g, " ")}
+                      {data.status.price.latestCandleStart ? ` · ${data.status.price.provider === "pyth" ? "Pyth price" : "candle"} ${timeUtc(data.status.price.latestCandleStart)}` : ""}
+                    </KV>
                   </div>
                   {data.status.analysisPaused.paused && (
                     <div style={{ marginTop: 14 }}>

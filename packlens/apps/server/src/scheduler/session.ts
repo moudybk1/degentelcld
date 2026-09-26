@@ -16,10 +16,17 @@ export type SessionRow = {
   started_by: string;
 };
 
+const DAY_MS = 24 * 60 * 60_000;
+
 /**
  * Time-bounded Nansen sessions (blueprint §14.2, §17.2). NANSEN_SESSION_END_AT
  * bounds every poller; the Smart Money session cannot end later. Session end
  * stops dispatch without resetting the campaign ledger.
+ *
+ * Continuous mode (Pyth price, no NANSEN_SESSION_END_AT, NANSEN_DAILY_CREDIT_CAP
+ * above 0): each session covers the rest of the current UTC day and the next
+ * one starts on first use, so paid work stays bounded by the daily cap and the
+ * campaign budget. Without a session end or a cap, Nansen is off entirely.
  */
 export class SessionManager implements SessionGuard {
   constructor(
@@ -34,15 +41,13 @@ export class SessionManager implements SessionGuard {
     const row = this.db
       .prepare("SELECT * FROM nansen_sessions WHERE campaign_id = ? AND ended_at_ms IS NULL ORDER BY started_at_ms DESC LIMIT 1")
       .get(this.campaignId) as SessionRow | undefined;
-    if (!row) return null;
-    if (now >= row.ends_at_ms) {
-      this.db.prepare("UPDATE nansen_sessions SET ended_at_ms = ?, ended_reason = 'expired' WHERE id = ?").run(row.ends_at_ms, row.id);
-      return null;
-    }
-    return row;
+    if (row && now < row.ends_at_ms) return row;
+    if (row) this.db.prepare("UPDATE nansen_sessions SET ended_at_ms = ?, ended_reason = 'expired' WHERE id = ?").run(row.ends_at_ms, row.id);
+    return this.config.nansen.continuous ? this.start({ startedBy: "continuous" }) : null;
   }
 
   maxEndMs(): number | null {
+    if (this.config.nansen.continuous) return Math.floor(this.clock.now() / DAY_MS) * DAY_MS + DAY_MS;
     return this.config.nansen.sessionEndAtMs;
   }
 
@@ -50,7 +55,8 @@ export class SessionManager implements SessionGuard {
   start(opts: { endsAtMs?: number; smartMoneyEndsAtMs?: number; startedBy: string }): SessionRow {
     const now = this.clock.now();
     const maxEnd = this.maxEndMs();
-    if (maxEnd === null || maxEnd <= now) throw new Error("NANSEN_SESSION_END_AT is not in the future; no session can start");
+    if (maxEnd === null) throw new Error("Nansen is off: set NANSEN_DAILY_CREDIT_CAP (continuous) or NANSEN_SESSION_END_AT to allow sessions");
+    if (maxEnd <= now) throw new Error("NANSEN_SESSION_END_AT is not in the future; no session can start");
     const endsAt = Math.min(opts.endsAtMs ?? maxEnd, maxEnd);
     const smMax = Math.min(this.config.smartMoney.sessionEndAtMs ?? endsAt, endsAt);
     const smEnds = Math.min(opts.smartMoneyEndsAtMs ?? smMax, smMax);

@@ -187,12 +187,13 @@ export class SmartMoneyService {
     this.recompute(mint, asOfMs, coverage, snapshotIds);
   }
 
-  /** Global feed: one page per poll, conservatively partial for every window. */
-  async pollGlobalFeed(jobId: string | null, perPage = 100): Promise<ScanResult> {
+  /** Global feed: one page per poll, conservatively partial for every window; optionally only tokens up to `maxTokenAgeDays` old. */
+  async pollGlobalFeed(jobId: string | null, perPage = 100, maxTokenAgeDays: number | null = null): Promise<ScanResult> {
     const coverage: Record<SmartMoneyWindow, WindowCoverage> = { "5m": "partial", "1h": "partial", "24h": "partial" };
     if (!this.client) return { ok: false, code: "no_client", asOfMs: null, pages: 0, coverage, snapshotIds: [], newObservations: 0 };
-    const scopeHash = scopeHashFor(undefined, perPage);
-    const req: SmDexReq = { chains: ["solana"], pagination: { page: 1, per_page: perPage }, order_by: [{ field: "block_timestamp", direction: "DESC" }] };
+    const filters: SmDexReq["filters"] = maxTokenAgeDays === null ? undefined : { token_bought_age_days: { min: 0, max: maxTokenAgeDays } };
+    const scopeHash = scopeHashFor(filters, perPage);
+    const req: SmDexReq = { chains: ["solana"], ...(filters ? { filters } : {}), pagination: { page: 1, per_page: perPage }, order_by: [{ field: "block_timestamp", direction: "DESC" }] };
     const res = await this.client.call(SMART_MONEY_DEX, req, { lane: "SMART_MONEY", purpose: "smart_money_global_feed", jobId, persist: true, scopeHash, bypassCache: true });
     if (!res.ok || !res.snapshotId) return { ok: false, code: res.ok ? "not_persisted" : res.code, asOfMs: null, pages: 0, coverage, snapshotIds: [], newObservations: 0 };
     const trades = res.normalized.data.trades;

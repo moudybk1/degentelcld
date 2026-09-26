@@ -5,6 +5,8 @@
 import type {
   Assessment,
   EvidenceMeta,
+  ExtraProfileWallet,
+  RepeatWalletsData,
   HoldersData,
   Netflow,
   OverviewData,
@@ -101,7 +103,8 @@ export function toPack(r: PackRow): Pack {
 
 export class InvalidInputError extends Error {}
 
-const WALLET_TTL = { pnl: 60 * 60_000, dex: 5 * 60_000, related: 15 * 60_000, balance: 60_000 };
+/** Freshness windows match the Nansen reuse windows: PnL per UTC day, trades hourly, relationships weekly. */
+const WALLET_TTL = { pnl: 24 * 60 * 60_000, dex: 60 * 60_000, related: 7 * 24 * 60 * 60_000, balance: 60_000 };
 
 export class ReadModels {
   private readonly smCache = new Map<string, SmartMoneyService>();
@@ -409,6 +412,38 @@ export class ReadModels {
     };
   }
 
+  /** Wallets that keep appearing in packs, most packs first, with stored Nansen context (no provider calls). */
+  repeatWallets(namespace: string, opts: { activeWithinHours: number | null; minPacks: number; limit: number }): RepeatWalletsData {
+    const now = this.clock.now();
+    const since = opts.activeWithinHours === null ? 0 : now - opts.activeWithinHours * 3_600_000;
+    const rows = this.db
+      .prepare(
+        `SELECT wallet, packs, first_seen_ms, last_seen_ms FROM wallet_pack_stats
+         WHERE namespace = ? AND packs >= ? AND last_seen_ms >= ? ORDER BY packs DESC, last_seen_ms DESC, wallet ASC LIMIT ?`,
+      )
+      .all(namespace, opts.minPacks, since, opts.limit) as { wallet: string; packs: number; first_seen_ms: number; last_seen_ms: number }[];
+    const total = this.db.prepare("SELECT COUNT(*) AS n FROM wallet_pack_stats WHERE namespace = ? AND packs >= ?").get(namespace, opts.minPacks) as { n: number };
+    const label = this.db.prepare("SELECT trader_label FROM smart_money_observations WHERE namespace = ? AND trader_address = ? AND trader_label IS NOT NULL ORDER BY block_time_ms DESC LIMIT 1");
+    return {
+      items: rows.map((r) => {
+        const related = buildPanel<RelatedData>(this.db, now, { namespace, endpoint: "profiler/address/related-wallets", subjectId: r.wallet, ttlMs: WALLET_TTL.related, jobType: "related_wallets" });
+        return {
+          wallet: r.wallet,
+          packs: r.packs,
+          firstSeenAt: new Date(r.first_seen_ms).toISOString(),
+          lastSeenAt: new Date(r.last_seen_ms).toISOString(),
+          smartMoneyLabel: (label.get(namespace, r.wallet) as { trader_label: string } | undefined)?.trader_label ?? null,
+          pnl: buildPanel<PnlData>(this.db, now, { namespace, endpoint: "profiler/address/pnl-summary", subjectId: r.wallet, ttlMs: WALLET_TTL.pnl, jobType: "wallet_pnl" }),
+          related: { state: related.state, count: related.data ? related.data.related.length : null },
+        };
+      }),
+      activeWithinHours: opts.activeWithinHours,
+      minPacks: opts.minPacks,
+      totalRepeatWallets: total.n,
+      asOf: new Date(now).toISOString(),
+    };
+  }
+
   private walletContext(namespace: string, wallet: string, mint: string | null, members: Set<string>): WalletContext {
     const now = this.clock.now();
     const related = buildPanel<Omit<RelatedData, "related"> & { related: Omit<RelatedData["related"][number], "isPackMember">[] }>(this.db, now, {
@@ -510,11 +545,12 @@ export class ReadModels {
     const memberSet = new Set(members.map((m) => m.walletAddress));
     const windows = this.sm(ns).latestWindows(r.mint);
     const packConfirmation = this.sm(ns).packContext(packId, r.total_wallet_count, members.map((m) => m.walletAddress));
-    const enr = this.db.prepare("SELECT profile_wallets_json, relationship_wallets_json FROM pack_enrichment WHERE pack_id = ?").get(packId) as
-      | { profile_wallets_json: string; relationship_wallets_json: string }
+    const enr = this.db.prepare("SELECT profile_wallets_json, relationship_wallets_json, extra_profile_wallets_json FROM pack_enrichment WHERE pack_id = ?").get(packId) as
+      | { profile_wallets_json: string; relationship_wallets_json: string; extra_profile_wallets_json: string }
       | undefined;
     const profileWallets = enr ? (JSON.parse(enr.profile_wallets_json) as string[]) : [];
     const relWallets = enr ? (JSON.parse(enr.relationship_wallets_json) as string[]) : [];
+    const extraWallets = enr ? (JSON.parse(enr.extra_profile_wallets_json) as ExtraProfileWallet[]) : [];
     const { tokenInfo, holders } = this.tokenPanels(ns, r.mint, memberSet);
 
     const windowLow = r.first_event_time_ms - 20_000;
@@ -578,9 +614,10 @@ export class ReadModels {
       context: {
         tokenInfo,
         holders,
-        wallets: [...new Set([...profileWallets, ...relWallets])].map((w) => this.walletContext(ns, w, r.mint, memberSet)),
+        wallets: [...new Set([...profileWallets, ...relWallets, ...extraWallets.map((x) => x.wallet)])].map((w) => this.walletContext(ns, w, r.mint, memberSet)),
         selectedProfileWallets: profileWallets,
         selectedRelationshipWallets: relWallets,
+        extraProfileWallets: extraWallets,
       },
       summary,
       history,
@@ -686,8 +723,8 @@ export class ReadModels {
     };
   }
 
-  smartMoneyActivity(namespace: string, cursor: string | null, token: string | null, limit = 50): SmartMoneyActivityData {
-    const fh = sha256Hex(canonicalJson({ token }));
+  smartMoneyActivity(namespace: string, cursor: string | null, token: string | null, limit = 50, pumpfunOnly = false): SmartMoneyActivityData {
+    const fh = sha256Hex(canonicalJson(pumpfunOnly ? { token, pumpfunOnly } : { token }));
     let asOf = this.clock.now();
     let after: { t: number; id: string } | null = null;
     if (cursor) {
@@ -701,6 +738,10 @@ export class ReadModels {
     if (token) {
       where.push("(o.token_bought_address = ? OR o.token_sold_address = ?)");
       args.push(token, token);
+    }
+    if (pumpfunOnly) {
+      // Tokens seen in this namespace's pump.fun stream (launched or traded on the bonding curve).
+      where.push("EXISTS (SELECT 1 FROM tokens t WHERE t.namespace = o.namespace AND t.mint IN (o.token_bought_address, o.token_sold_address))");
     }
     if (after) {
       where.push("(o.block_time_ms < ? OR (o.block_time_ms = ? AND o.id < ?))");
@@ -717,12 +758,15 @@ export class ReadModels {
       `SELECT s.snapshot_id, e.params_json FROM smart_money_observation_sources s JOIN enrichment_snapshots e ON e.id = s.snapshot_id WHERE s.observation_id = ? ORDER BY e.fetched_at_ms LIMIT 1`,
     );
     const hasPackStmt = this.db.prepare("SELECT 1 FROM packs WHERE namespace = ? AND mint = ? LIMIT 1");
+    const tokenStmt = this.db.prepare("SELECT created_event_time_ms FROM tokens WHERE namespace = ? AND mint = ?");
     const out: SmartMoneyActivityRow[] = page.map((o) => {
       const sellOfToken = QUOTE_LIKE.has(o.token_bought_address) && !QUOTE_LIKE.has(o.token_sold_address);
       const direction: "buy" | "sell" = sellOfToken ? "sell" : "buy";
       const tokenAddress = sellOfToken ? o.token_sold_address : o.token_bought_address;
       const src = sourceStmt.get(o.id) as { snapshot_id: string; params_json: string } | undefined;
-      const scope = src && (JSON.parse(src.params_json) as { filters?: unknown }).filters ? "Token lookup" : "Global feed";
+      const filters = src ? (JSON.parse(src.params_json) as { filters?: { token_bought_address?: string; token_bought_age_days?: unknown } }).filters : undefined;
+      const scope = filters?.token_bought_address ? "Token lookup" : filters?.token_bought_age_days ? "New-token feed" : "Global feed";
+      const launch = tokenStmt.get(namespace, tokenAddress) as { created_event_time_ms: number | null } | undefined;
       return {
         observationId: o.id,
         transactionHash: o.transaction_hash,
@@ -739,6 +783,8 @@ export class ReadModels {
         snapshotId: src?.snapshot_id ?? "",
         scope,
         hasPack: hasPackStmt.get(namespace, tokenAddress) !== undefined,
+        pumpfun: launch !== undefined,
+        tokenLaunchedAt: launch?.created_event_time_ms != null ? new Date(launch.created_event_time_ms).toISOString() : null,
       };
     });
     const lastRow = page[page.length - 1];
@@ -754,14 +800,18 @@ export class ReadModels {
       state: {
         availability: out.length > 0 ? "available" : anyObs || latestFeed ? "empty" : "not_requested",
         coverage: anyObs || latestFeed ? "partial" : "unknown",
-        freshness: latestFeed ? (now - latestFeed.fetched_at_ms > 240_000 ? "stale" : "fresh") : "unknown",
+        // Fresh until two poll intervals pass without a new feed page.
+        freshness: latestFeed ? (now - latestFeed.fetched_at_ms > Math.max(240_000, 2 * this.config.smartMoney.pollSeconds * 1000) ? "stale" : "fresh") : "unknown",
         fetchedAt: latestFeed ? new Date(latestFeed.fetched_at_ms).toISOString() : null,
         periodStart: null,
         periodEnd: null,
         reasonCode: null,
         snapshotIds: latestFeed ? [latestFeed.id] : [],
       },
-      scopeDescription: "Nansen Smart Money DEX trades on Solana (endpoint default Smart Money group, rolling 24 hours). Global feed pages are partial; token lookups add targeted rows.",
+      scopeDescription:
+        this.config.smartMoney.feedMaxTokenAgeDays === null
+          ? "Nansen Smart Money DEX trades on Solana (endpoint default Smart Money group, rolling 24 hours). Global feed pages are partial; token lookups add targeted rows."
+          : `Nansen Smart Money DEX trades on Solana in tokens at most ${this.config.smartMoney.feedMaxTokenAgeDays} day${this.config.smartMoney.feedMaxTokenAgeDays === 1 ? "" : "s"} old (endpoint default Smart Money group, rolling 24 hours). Feed pages are partial; token lookups add targeted rows.`,
     };
   }
 

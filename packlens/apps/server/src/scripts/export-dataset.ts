@@ -9,7 +9,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 import type { TradeEvent } from "@packlens/contracts";
-import { BASELINE_CONFIG_VERSION, loadConfig, loadDotEnv } from "../config.js";
+import { liveNamespace, loadConfig, loadDotEnv } from "../config.js";
 import { openDatabase } from "../db/connection.js";
 import { DECODER_VERSION } from "../collector/decoder.js";
 import { sha256Hex } from "../lib/ids.js";
@@ -28,7 +28,7 @@ if (!Number.isFinite(from) || !Number.isFinite(to) || to <= from) {
 }
 const config = loadConfig({ ...process.env, APP_MODE: "fixture" });
 const db = openDatabase(config.databasePath);
-const ns = values.namespace ?? `live:${config.nansen.campaignId}`;
+const ns = values.namespace ?? liveNamespace(config);
 const where = ["namespace = ?", "event_time_ms >= ?", "event_time_ms <= ?"];
 const args: unknown[] = [ns, from, to];
 if (values.mint) {
@@ -53,10 +53,12 @@ const events = rows.map((r) => {
   };
 });
 const snapIds = [...new Set(events.map((e) => e.pinned.priceSnapshotId).filter((x): x is string => x !== null))];
+const snapshotPolicies = new Set<string>();
 const priceSnapshots = snapIds.map((id) => {
-  const s = db.prepare("SELECT id, quote_mint, available_at_ms, requested_from_ms, requested_to_ms, candles_json, timeframe FROM price_snapshots WHERE id = ?").get(id) as {
-    id: string; quote_mint: string; available_at_ms: number; requested_from_ms: number; requested_to_ms: number; candles_json: string; timeframe: "1m" | "5m";
+  const s = db.prepare("SELECT id, quote_mint, available_at_ms, requested_from_ms, requested_to_ms, candles_json, timeframe, policy_version FROM price_snapshots WHERE id = ?").get(id) as {
+    id: string; quote_mint: string; available_at_ms: number; requested_from_ms: number; requested_to_ms: number; candles_json: string; timeframe: "1m" | "5m" | "tick"; policy_version: string;
   };
+  snapshotPolicies.add(s.policy_version);
   return { id: s.id, quoteMint: s.quote_mint, availableAtMs: s.available_at_ms, requestedFromMs: s.requested_from_ms, requestedToMs: s.requested_to_ms, timeframe: s.timeframe, candles: JSON.parse(s.candles_json) };
 });
 const mints = [...new Set(events.map((e) => e.mint))];
@@ -72,10 +74,12 @@ const dataset = {
   chain: "solana",
   source: "pumpfun",
   decoderVersion: DECODER_VERSION,
-  configVersion: BASELINE_CONFIG_VERSION,
+  // Replays of this window use the rule live detection runs now (PACK_MIN_WALLETS / PACK_MIN_TRADE_USD).
+  configVersion: config.detector.version,
   createdAt: new Date().toISOString(),
-  description: `Real Solana mainnet pump.fun events recorded by PackLens in ${ns}, with pinned Nansen OHLCV valuations and original admission watermarks. Times are original chain and arrival times.`,
-  pricePolicy: config.price.policy.version,
+  description: `Real Solana mainnet pump.fun events recorded by PackLens in ${ns}, with pinned valuations (${[...snapshotPolicies].join(", ") || "no priced events"}) and original admission watermarks. Times are original chain and arrival times.`,
+  // The policy the window was actually valued under; replays use it, whatever the live setting is now.
+  pricePolicy: snapshotPolicies.size === 1 ? [...snapshotPolicies][0] : config.price.policy.version,
   events,
   priceSnapshots,
   tokens,
@@ -85,7 +89,7 @@ const file = `fixtures/recorded/${values.id}.json`;
 writeFileSync(join(config.rootDir, file), text);
 const manifest = {
   datasetId: values.id, label: dataset.label, mode: "recorded", origin: "recorded-live", chain: "solana", source: "pumpfun", decoderVersion: DECODER_VERSION,
-  configVersion: BASELINE_CONFIG_VERSION, createdAt: dataset.createdAt, file, sha256: sha256Hex(text), eventCount: events.length,
+  configVersion: config.detector.version, createdAt: dataset.createdAt, file, sha256: sha256Hex(text), eventCount: events.length,
 };
 writeFileSync(join(config.rootDir, "fixtures", "manifests", `${values.id}.json`), JSON.stringify(manifest, null, 2) + "\n");
 process.stdout.write(`Exported ${events.length} events, ${priceSnapshots.length} price snapshots to ${file}\nReplay it with: npm run replay -- --dataset ${values.id} --mode recorded-arrival\n`);

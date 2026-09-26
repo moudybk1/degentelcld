@@ -142,6 +142,17 @@ export class IngestPipeline {
     return "admitted";
   }
 
+  /**
+   * Earliest clock time at which tick() drains an event or closes an expansion
+   * window, or null when nothing waits. Earlier ticks only advance the watermark.
+   */
+  nextWorkAtMs(): number | null {
+    let w = this.engine.nextTimerWatermarkMs();
+    for (const e of this.pending) if (w === null || e.blockTimeMs < w) w = e.blockTimeMs;
+    if (w === null) return null;
+    return this.watermarkMs !== null && this.watermarkMs >= w ? this.clock.now() : w + this.toleranceMs;
+  }
+
   /** Advance the watermark from the clock and process due events and timers. */
   tick(): { drained: number; createdPackIds: string[] } {
     const floorNow = Math.floor(this.clock.now());

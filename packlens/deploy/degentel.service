@@ -1,0 +1,29 @@
+[Unit]
+Description=Degentellegence (PackLens) pack radar
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=degentel
+Group=degentel
+WorkingDirectory=/opt/degentel/app
+# Deployment settings; secrets stay in /opt/degentel/app/.env (process env wins over .env).
+Environment=NODE_ENV=production
+Environment=HOST=127.0.0.1
+Environment=PORT=8787
+Environment=DATABASE_PATH=/opt/degentel/data/packlens.sqlite
+EnvironmentFile=-/opt/degentel/mode.env
+ExecStart=/usr/bin/node apps/server/dist/index.js
+Restart=always
+RestartSec=5
+TimeoutStopSec=30
+KillSignal=SIGTERM
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+MemoryMax=3G
+
+[Install]
+WantedBy=multi-user.target

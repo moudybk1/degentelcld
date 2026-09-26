@@ -246,35 +246,37 @@ export function WalletProfileCard({ ctx, mint, synthetic, title }: { ctx: Wallet
           )}
         </div>
 
-        <div>
-          <div className="row" style={{ justifyContent: "space-between" }}>
-            <span className="h3" style={{ fontSize: 13.5 }}>Later balance check</span>
-            <PanelStatus state={ctx.balance.state} compact />
+        {bal || ctx.balance.state.availability !== "not_requested" ? (
+          <div>
+            <div className="row" style={{ justifyContent: "space-between" }}>
+              <span className="h3" style={{ fontSize: 13.5 }}>Later balance check</span>
+              <PanelStatus state={ctx.balance.state} compact />
+            </div>
+            {bal ? (
+              <p className="small" style={{ margin: "6px 0 0" }}>
+                {bal.packToken?.observedOnFetchedPages ? (
+                  <>
+                    Holding {decimal(bal.packToken.tokenAmount, 0)} tokens ({usd(bal.packToken.valueUsd)}) when checked
+                    {ctx.balance.state.fetchedAt ? ` at ${timeUtc(ctx.balance.state.fetchedAt)}` : ""}.
+                  </>
+                ) : (
+                  <>This token was not on the balance page Nansen returned{ctx.balance.state.fetchedAt ? ` at ${timeUtc(ctx.balance.state.fetchedAt)}` : ""}.</>
+                )}
+                <span className="muted"> A balance observed in a later check, not a change or proof of selling.</span>
+              </p>
+            ) : (
+              <p className="small muted" style={{ margin: "6px 0 0" }}>
+                {ctx.balance.state.availability === "budget_paused"
+                  ? "Checks paused before the later balance check ran."
+                  : ctx.balance.state.availability === "queued"
+                    ? "Scheduled for five minutes after the pack formed."
+                    : ctx.balance.state.availability === "not_requested"
+                      ? "Not scheduled for this wallet."
+                      : "No balance data."}
+              </p>
+            )}
           </div>
-          {bal ? (
-            <p className="small" style={{ margin: "6px 0 0" }}>
-              {bal.packToken?.observedOnFetchedPages ? (
-                <>
-                  Holding {decimal(bal.packToken.tokenAmount, 0)} tokens ({usd(bal.packToken.valueUsd)}) when checked
-                  {ctx.balance.state.fetchedAt ? ` at ${timeUtc(ctx.balance.state.fetchedAt)}` : ""}.
-                </>
-              ) : (
-                <>This token was not on the balance page Nansen returned{ctx.balance.state.fetchedAt ? ` at ${timeUtc(ctx.balance.state.fetchedAt)}` : ""}.</>
-              )}
-              <span className="muted"> A balance observed in a later check, not a change or proof of selling.</span>
-            </p>
-          ) : (
-            <p className="small muted" style={{ margin: "6px 0 0" }}>
-              {ctx.balance.state.availability === "budget_paused"
-                ? "Checks paused before the later balance check ran."
-                : ctx.balance.state.availability === "queued"
-                  ? "Scheduled for five minutes after the pack formed."
-                  : ctx.balance.state.availability === "not_requested"
-                    ? "Not scheduled for this wallet."
-                    : "No balance data."}
-            </p>
-          )}
-        </div>
+        ) : null}
       </div>
       <div style={{ marginTop: 14 }} className="tiny muted">
         Source: {src("Nansen wallet profiler")}

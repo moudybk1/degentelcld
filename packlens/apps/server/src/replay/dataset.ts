@@ -50,7 +50,7 @@ export const DatasetSchema = z.object({
   createdAt: z.string(),
   description: z.string(),
   /** Price policy the dataset was recorded or designed under; replays value with it. */
-  pricePolicy: z.enum(["nansen-1m-closed-v1", "nansen-5m-closed-v1"]).optional(),
+  pricePolicy: z.enum(["nansen-1m-closed-v1", "nansen-5m-closed-v1", "pyth-onchain-v1"]).optional(),
   events: z.array(DatasetEventSchema),
   priceSnapshots: z.array(
     z.object({
@@ -59,7 +59,7 @@ export const DatasetSchema = z.object({
       availableAtMs: z.number().int(),
       requestedFromMs: z.number().int().optional(),
       requestedToMs: z.number().int().optional(),
-      timeframe: z.enum(["1m", "5m"]).optional(),
+      timeframe: z.enum(["1m", "5m", "tick"]).optional(),
       candles: z.array(z.object({ intervalStartMs: z.number().int(), close: z.string() })),
     }),
   ),

@@ -1,0 +1,37 @@
+# Public site in front of the app on 127.0.0.1:8787. Caddy obtains and renews
+# the HTTPS certificate itself; the domain's A record must point at this server
+# and ports 80 and 443 must be open. Replace example.com with your domain.
+#
+# App settings that go with it (/opt/degentel/mode.env):
+#   PUBLIC_HOSTING=true  SECURE_COOKIES=true  TRUST_PROXY=loopback
+#   ALLOWED_ORIGINS=https://example.com
+
+www.example.com {
+	redir https://example.com{uri} permanent
+}
+
+example.com {
+	# Compress pages and JSON, but never the live-update stream.
+	@compressible not path /api/events
+	encode @compressible zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=()"
+		X-Frame-Options "DENY"
+		# Token logos carry their own stricter policy from the app; keep it.
+		?Content-Security-Policy "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+		-Server
+	}
+
+	reverse_proxy 127.0.0.1:8787
+
+	log {
+		output file /var/log/caddy/degentel-access.log {
+			roll_size 50MiB
+			roll_keep 5
+		}
+	}
+}

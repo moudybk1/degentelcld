@@ -3,6 +3,7 @@ import type { PackListItem } from "@packlens/contracts";
 import { PackCard } from "../components/PackCard";
 import { Reveal, Tag } from "../components/ui";
 import { GLOSSARY } from "../lib/glossary";
+import { ruleText, ruleUsd, useRule } from "../lib/rule";
 import { useNsHref } from "../state/namespace";
 
 const now = Date.now();
@@ -69,6 +70,7 @@ const QUESTIONS: { q: string; a: string; where: string }[] = [
 
 export function GuidePage() {
   const href = useNsHref();
+  const rule = useRule();
   return (
     <div className="container">
       <Reveal>
@@ -125,7 +127,7 @@ export function GuidePage() {
           <div className="span-6">
             <ol className="callouts">
               <li>
-                <strong>Each row is one pack:</strong> 3 or more different wallets that each bought at least $20 of the same token within 20 seconds. <em>Forming</em> means it can still gain wallets; otherwise the list is final.
+                <strong>Each row is one pack:</strong> {rule.minUniqueWallets} or more different wallets that each bought at least {ruleUsd(rule)} of the same token within {rule.triggerWindowSeconds} seconds. <em>Forming</em> means it can still gain wallets; otherwise the list is final.
               </li>
               <li>
                 <strong>Wallets, Pack buys, Entry window.</strong> How many wallets, how much they bought together, and how close together the first ones bought. <em>Same second</em> means they landed at once.
@@ -268,7 +270,7 @@ export function GuidePage() {
                 ["Unavailable from this source", "Nansen has no data for this token yet, common for new tokens."],
                 ["Not checked yet", "Nansen has not been checked for this pack or token. The largest packs are checked automatically while credits allow; an operator can run the rest."],
                 ["Nansen checks paused", "The credit budget or session limit was reached, so no new Nansen checks run."],
-                ["Detection paused", "Shown in the top bar when there is no fresh SOL price: new buys cannot pass the $20 check, so no new packs form. Stored packs stay readable."],
+                ["Detection paused", `Shown in the top bar when there is no fresh SOL price: new buys cannot pass the ${ruleUsd(rule)} check, so no new packs form. Stored packs stay readable.`],
                 ["Forming / Final", "A forming pack can still gain wallets for up to 40 seconds after its first buy; a final one cannot."],
                 ["Example / Replay / Live", "Synthetic example data, a recorded dataset at its original times, or the live stream."],
               ].map(([l, m]) => (
@@ -306,7 +308,7 @@ export function GuidePage() {
           {Object.values(GLOSSARY).map((g) => (
             <div key={g.term} className="kv" style={{ alignItems: "flex-start", borderBottom: "1px solid var(--border)", paddingBottom: 12 }}>
               <dt style={{ fontWeight: 600, color: "var(--ink)", minWidth: 200 }}>{g.term}</dt>
-              <dd style={{ margin: 0, textAlign: "left", flex: 1, color: "var(--ink-2)" }}>{g.text}</dd>
+              <dd style={{ margin: 0, textAlign: "left", flex: 1, color: "var(--ink-2)" }}>{ruleText(g.text, rule)}</dd>
             </div>
           ))}
         </dl>

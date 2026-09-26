@@ -11,7 +11,7 @@
  */
 import type { TradeEvent } from "@packlens/contracts";
 import { VirtualClock } from "../clock.js";
-import { pricePolicy, type AppConfig } from "../config.js";
+import { detectorConfigForVersion, policyForVersion, type AppConfig } from "../config.js";
 import type { Db } from "../db/connection.js";
 import { DECODER_VERSION, PUMP_TOKEN_DECIMALS } from "../collector/decoder.js";
 import { DetectorEngine } from "../ingest/engine.js";
@@ -98,10 +98,13 @@ export function runDataset(opts: {
   label: string;
 }): RunResult {
   const { db, outbox, config, dataset, namespace } = opts;
-  if (dataset.configVersion !== config.detector.version) throw new Error(`Dataset config ${dataset.configVersion} does not match ${config.detector.version}`);
+  // A dataset replays under the rule it names, whatever rule live detection uses now.
+  const detector = detectorConfigForVersion(dataset.configVersion);
+  if (!detector) throw new Error(`Dataset config ${dataset.configVersion} is not a known detection rule`);
   const events = [...dataset.events];
   if (events.length === 0) throw new Error("Dataset has no events");
-  const startMs = Math.min(...events.map((e) => Math.min(e.receivedAtMs, e.blockTimeMs))) - 5000;
+  // A loop, not Math.min(...events): spreading a recorded live hour (~140k events) overflows the stack.
+  const startMs = events.reduce((m, e) => Math.min(m, e.receivedAtMs, e.blockTimeMs), Infinity) - 5000;
   const clock = new VirtualClock(startMs);
   ensureNamespace(db, namespace, opts.namespaceMode, opts.label, opts.datasetHash, Date.now());
   const existing = db.prepare("SELECT COUNT(*) AS n FROM trade_events WHERE namespace = ?").get(namespace) as { n: number };
@@ -128,16 +131,16 @@ export function runDataset(opts: {
       candles: s.candles,
       providerRequestId: null,
       attemptId: null,
-      source: dataset.origin === "synthetic" ? "fixture:synthetic" : "recorded:nansen",
+      source: dataset.origin === "synthetic" ? "fixture:synthetic" : s.timeframe === "tick" ? "recorded:pyth" : "recorded:nansen",
       availableAtMs: s.availableAtMs,
       timeframe: s.timeframe ?? "1m",
-      policyVersion: s.timeframe === "5m" ? "nansen-5m-closed-v1" : "nansen-1m-closed-v1",
+      policyVersion: s.timeframe === "tick" ? "pyth-onchain-v1" : s.timeframe === "5m" ? "nansen-5m-closed-v1" : "nansen-1m-closed-v1",
     });
   }
-  const engine = new DetectorEngine(db, namespace, config.detector, clock, outbox);
-  const pipeline = new IngestPipeline(db, namespace, clock, engine, config.detector.reorderToleranceMs);
+  const engine = new DetectorEngine(db, namespace, detector, clock, outbox);
+  const pipeline = new IngestPipeline(db, namespace, clock, engine, detector.reorderToleranceMs);
   // Value with the dataset's own price policy so results never depend on the operator's live setting.
-  const policy = pricePolicy(dataset.pricePolicy === "nansen-5m-closed-v1" ? "5m" : "1m", config.price.maxAgeSeconds);
+  const policy = policyForVersion(dataset.pricePolicy, config.price.maxAgeSeconds);
   const maxAge: PriceLimits = { maxCandleAgeMs: policy.maxCandleAgeMs, maxFetchAgeMs: policy.maxFetchAgeMs };
   const sourceMode: TradeEvent["sourceMode"] = opts.namespaceMode === "fixture" ? "fixture" : "replay";
   const packIds: string[] = [];
@@ -149,8 +152,14 @@ export function runDataset(opts: {
       if (e.admissionWatermarkMs !== undefined && e.admissionWatermarkMs !== null) {
         if (pipeline.watermark === null || e.admissionWatermarkMs > pipeline.watermark) packIds.push(...pipeline.advanceTo(e.admissionWatermarkMs).createdPackIds);
       } else {
+        // Ticks with nothing to drain or close only move the watermark, and the next tick moves it as
+        // far, so jump to the next tick with work. The last tick before an arrival always runs so
+        // admission sees the same watermark as ticking every 250 ms.
+        const lastTickAt = tickAt + Math.floor((e.receivedAtMs - tickAt) / 250) * 250;
         while (tickAt + 250 <= e.receivedAtMs) {
-          tickAt += 250;
+          const workAt = pipeline.nextWorkAtMs();
+          const workTickAt = workAt === null ? Infinity : clock.now() >= workAt ? tickAt + 250 : tickAt + Math.ceil((workAt - tickAt) / 250) * 250;
+          tickAt = Math.min(workTickAt, lastTickAt);
           clock.set(Math.max(clock.now(), tickAt));
           packIds.push(...pipeline.tick().createdPackIds);
         }
@@ -166,7 +175,7 @@ export function runDataset(opts: {
     }
   }
   // Drain everything and close every expansion window.
-  const endMs = Math.max(...events.map((e) => Math.max(e.blockTimeMs, e.receivedAtMs))) + config.detector.expansionFromStartMs + config.detector.reorderToleranceMs + 1000;
+  const endMs = events.reduce((m, e) => Math.max(m, e.blockTimeMs, e.receivedAtMs), -Infinity) + detector.expansionFromStartMs + detector.reorderToleranceMs + 1000;
   clock.set(Math.max(clock.now(), endMs));
   packIds.push(...pipeline.advanceTo(endMs).createdPackIds);
 

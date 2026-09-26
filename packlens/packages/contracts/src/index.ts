@@ -65,8 +65,9 @@ export type EligibilityReason =
 
 export type DetectorConfig = {
   version: string;
-  minTradeUsd: "20";
-  minUniqueWallets: 3;
+  /** Baseline "20" and 3; an owner-chosen rule may differ under its own version. Windows stay locked. */
+  minTradeUsd: string;
+  minUniqueWallets: number;
   triggerWindowMs: 20000;
   expansionFromStartMs: 40000;
   cooldownFromLastUpdateMs: 120000;
@@ -141,6 +142,30 @@ export type PanelState = {
 };
 
 export type Panel<T> = { data: T | null; state: PanelState };
+
+export type ExtraProfileWallet = { wallet: string; reason: "largest_buyer" | "repeat_wallet"; earlierPacks: number };
+
+/** A wallet that keeps appearing in packs, with its stored Nansen context. */
+export type RepeatWalletRow = {
+  wallet: string;
+  packs: number;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  /** Nansen Smart Money label seen on this wallet's trades, if any. */
+  smartMoneyLabel: string | null;
+  pnl: Panel<PnlData>;
+  related: { state: PanelState; count: number | null };
+};
+
+export type RepeatWalletsData = {
+  items: RepeatWalletRow[];
+  /** Only wallets seen in a pack within this many hours; null means all time. */
+  activeWithinHours: number | null;
+  minPacks: number;
+  /** Wallets in this namespace that joined at least minPacks packs (all time). */
+  totalRepeatWallets: number;
+  asOf: string;
+};
 
 /* ------------------------------------------------------------------ */
 /* §9 Smart Money                                                      */
@@ -423,6 +448,8 @@ export type PackDetail = {
     wallets: WalletContext[];
     selectedProfileWallets: string[];
     selectedRelationshipWallets: string[];
+    /** Profiled in addition to the first three initial members: the largest buyer and the most repeated member. */
+    extraProfileWallets: ExtraProfileWallet[];
   };
   summary: string;
   history: { at: string; kind: string; detail: string }[];
@@ -612,8 +639,22 @@ export type OverviewToken = {
 
 export type CollectorHealth = "connected" | "connecting" | "disconnected" | "not_configured" | "replay" | "fixture";
 
+/** The pack rule a namespace was detected under. */
+export type DetectionRule = {
+  version: string;
+  minUniqueWallets: number;
+  /** Per-buy USD minimum, decimal string. */
+  minTradeUsd: string;
+  triggerWindowSeconds: number;
+  expansionSeconds: number;
+  /** False for an owner-chosen rule other than the spec baseline (3 wallets, $20 per buy). */
+  isBaseline: boolean;
+};
+
 export type SourceStatus = {
   namespace: string;
+  /** Absent from older servers; clients fall back to the baseline rule. */
+  detector?: DetectionRule;
   mode: Mode;
   source: "pumpfun";
   chain: "solana";
@@ -631,8 +672,10 @@ export type SourceStatus = {
     latestCandleStart: string | null;
     latestSnapshotAvailableAt: string | null;
     quoteMints: string[];
-    /** Active quote-price policy: 1m baseline or the documented 5m fallback. */
-    timeframe: "1m" | "5m";
+    /** Quote-price source: Nansen OHLCV candles or Pyth's on-chain SOL/USD price. */
+    provider: "nansen" | "pyth";
+    /** Active quote-price policy: 1m baseline, the documented 5m fallback, or a Pyth published price ("tick"). */
+    timeframe: "1m" | "5m" | "tick";
     policyVersion: string;
     isBaseline: boolean;
   };
@@ -703,6 +746,10 @@ export type SmartMoneyActivityRow = {
   snapshotId: string;
   scope: string;
   hasPack: boolean;
+  /** Additive: the token traded on pump.fun in this namespace's stream. */
+  pumpfun?: boolean;
+  /** Additive: the token's pump.fun launch time from the observed create event (null when not observed). */
+  tokenLaunchedAt?: string | null;
 };
 
 export type SmartMoneyActivityData = {
@@ -751,6 +798,10 @@ export type UsageSummary = {
     unresolved: number;
     available: number | null;
     priceReserve: number;
+    /** Credits allowed per UTC day, or null when only the campaign budget applies. */
+    dailyCap: number | null;
+    /** Credits used since 00:00 UTC (settled, reserved, and unresolved). */
+    usedToday: number;
     lastReportedRemaining: number | null;
   };
   attempts: {
@@ -813,6 +864,11 @@ export type OperatorOverview = {
     configVersion: string;
     decoderVersion: string;
     smartMoneyEnabled: boolean;
+    /** Whether the shared global Smart Money feed is polled (per-pack lookups follow smartMoneyEnabled). */
+    smartMoneyFeedEnabled: boolean;
+    priceProvider: "nansen" | "pyth";
+    /** "continuous" renews a session each UTC day under the daily cap; "off" means no paid Nansen calls. */
+    nansenMode: "session" | "continuous" | "off";
     smartMoneyPollSeconds: number;
     priceRefreshSeconds: number;
     enrichmentAutoPacksPerCycle: number;

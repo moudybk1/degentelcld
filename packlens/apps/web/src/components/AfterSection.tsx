@@ -183,7 +183,7 @@ export function EarlierPacksTable({ packs }: { packs: EarlierPack[] }) {
   return (
     <div className="table-wrap">
       <table className="table">
-        <caption className="sr-only">Earlier packs that share at least two wallets with this pack</caption>
+        <caption className="sr-only">Earlier packs from the previous 7 days that share at least two wallets with this pack</caption>
         <thead>
           <tr>
             <th scope="col">Token</th>

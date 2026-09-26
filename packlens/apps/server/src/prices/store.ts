@@ -1,4 +1,5 @@
 import type { Clock } from "../clock.js";
+import type { PriceTimeframe } from "../config.js";
 import type { Db } from "../db/connection.js";
 import { newId } from "../lib/ids.js";
 import type { PriceCandle, PriceSnapshotView } from "../normalization/valuation.js";
@@ -16,11 +17,12 @@ export type NewPriceSnapshot = {
   /** Replay/fixture imports keep the recorded availability time. */
   availableAtMs?: number;
   id?: string;
-  timeframe?: "1m" | "5m";
+  timeframe?: PriceTimeframe;
   policyVersion?: string;
 };
 
-const CANDLE_MS_BY_TIMEFRAME: Record<string, number> = { "1m": 60_000, "5m": 300_000 };
+/** "tick" is a published price (Pyth), not a candle: it counts from its publish time. */
+const CANDLE_MS_BY_TIMEFRAME: Record<string, number> = { "1m": 60_000, "5m": 300_000, tick: 0 };
 
 const RETAIN_MS = 30 * 60_000;
 

@@ -64,7 +64,8 @@ export function handleSse(runtime: Runtime, req: FastifyRequest, reply: FastifyR
   });
   const heartbeat = setInterval(() => write(": heartbeat\n\n"), 15_000);
   const status = setInterval(() => {
-    const s = runtime.status(namespace);
+    // One status computation per interval, however many viewers are connected.
+    const s = runtime.sharedStatus(namespace);
     send(null, "source.status", {
       health: s.collector.health,
       lastMessageAt: s.collector.lastMessageAt,

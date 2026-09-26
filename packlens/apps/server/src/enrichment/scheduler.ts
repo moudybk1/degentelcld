@@ -15,9 +15,23 @@ import type { BudgetLedger } from "../scheduler/budget.js";
 import type { JobQueue } from "../scheduler/queue.js";
 import type { SessionManager } from "../scheduler/session.js";
 
-const BALANCE_FOLLOWUP_DELAY_MS = 5 * 60_000;
-/** Expected credits for one pack's P0 job set (public pricing): 1+5+3+3+2+2 base, +5+5 Smart Money. */
-export const PACK_ENRICHMENT_CREDITS = 26;
+/**
+ * Upper bound of credits for one pack's job set: token information 1, holders 5, PnL and trades for
+ * the first three initial members 3+3, relationships for the first two 2, and up to two extra
+ * profiles (PnL + relationships) 4, plus a Smart Money token lookup 5. Netflow (5) follows only when
+ * Smart Money buyers are observed. Cached wallet data costs nothing.
+ */
+export const PACK_ENRICHMENT_CREDITS = 23;
+/** Automatic work may use this share of the daily cap, paced across the UTC day; the rest is kept for operators. */
+const AUTO_DAILY_SHARE = 0.9;
+const DAY_MS = 24 * 60 * 60_000;
+/** Only recent packs are automatic candidates; older unanalyzed packs stay available to operators. */
+const CANDIDATE_WINDOW_MS = 30 * 60_000;
+/** Repeat wallets profiled automatically per cycle (PnL + relationships, 2 credits each unless cached). */
+const REPEAT_WALLETS_PER_CYCLE = 3;
+const REPEAT_WALLET_MIN_PACKS = 3;
+const REPEAT_WALLET_CREDITS = 2;
+const REPEAT_WALLET_INTERVAL_MS = 5 * 60_000;
 const GLOBAL_FEED_CREDITS = 5;
 const PIN_SM_REFRESH_MS = 120_000;
 const PIN_NETFLOW_REFRESH_MS = 5 * 60_000;
@@ -61,13 +75,31 @@ export class EnrichmentScheduler {
    * enrichment is not limited by this reserve (only by the ledger).
    */
   automaticHeadroom(): number | null {
+    return this.headrooms()?.paced ?? null;
+  }
+
+  /** True when only the daily pace holds automatic work back; the budget itself still covers `cost`. */
+  isPacing(cost: number): boolean {
+    const h = this.headrooms();
+    return h !== null && h.paced < cost && h.budget >= cost;
+  }
+
+  /** Automatic headroom before (`budget`) and after (`paced`) daily pacing; null without a ledger. */
+  private headrooms(): { budget: number; paced: number } | null {
     if (!this.ledger) return null;
     const s = this.session.current();
-    if (!s) return 0;
+    if (!s) return { budget: 0, paced: 0 };
     const t = this.ledger.totals();
-    const pollsLeft = Math.ceil(Math.max(0, s.ends_at_ms - this.clock.now()) / (this.config.price.refreshSeconds * 1000));
+    // Pyth prices are read from the chain and cost no credits.
+    const pollsLeft = this.config.price.provider === "nansen" ? Math.ceil(Math.max(0, s.ends_at_ms - this.clock.now()) / (this.config.price.refreshSeconds * 1000)) : 0;
     const sessionPriceNeed = pollsLeft * this.config.price.quotes.length;
-    return t.remaining - t.priceReserve - sessionPriceNeed;
+    const budget = t.remaining - t.priceReserve - sessionPriceNeed;
+    if (t.dailyCap === null) return { budget, paced: budget };
+    // Pace automatic spending across the UTC day (plus one hour of burst) so the cap is not
+    // used up in the first hours; operators keep the rest of the day's allowance.
+    const elapsed = (this.clock.now() % DAY_MS) / DAY_MS;
+    const paced = Math.floor(t.dailyCap * AUTO_DAILY_SHARE * Math.min(1, elapsed + 1 / 24));
+    return { budget, paced: Math.min(budget, paced - t.usedToday) };
   }
 
   private canAutoSpend(cost: number): boolean {
@@ -89,6 +121,8 @@ export class EnrichmentScheduler {
       this.timers.push(t);
     };
     every(this.config.enrichment.cycleSeconds * 1000, () => this.runCycle(true));
+    // Its own rhythm, so a short pack cycle does not spend the pace in 2-credit steps.
+    every(REPEAT_WALLET_INTERVAL_MS, () => this.profileRepeatWallets());
     every(this.config.smartMoney.pollSeconds * 1000, () => this.enqueueGlobalFeed());
     every(10_000, () => this.housekeeping());
     // First cycle and first feed poll shortly after startup.
@@ -123,34 +157,96 @@ export class EnrichmentScheduler {
         .prepare("SELECT COUNT(DISTINCT pack_id) AS n FROM jobs WHERE namespace = ? AND lane = 'BASE_ENRICHMENT' AND status IN ('queued', 'running') AND pack_id IS NOT NULL")
         .get(this.namespace) as { n: number }
     ).n;
-    const room = Math.min(quota, this.config.enrichment.maxQueuedPacks - waiting);
-    if (room <= 0) return;
-    if (!this.canAutoSpend(PACK_ENRICHMENT_CREDITS)) return; // keep price polling funded for the session
+    // Waiting packs reserve their credits only as their jobs run, so count them at full cost:
+    // a cycle schedules no more packs than the headroom (and the daily pace) covers.
+    const headroom = this.automaticHeadroom();
+    const affordable = headroom === null ? Infinity : Math.floor(headroom / PACK_ENRICHMENT_CREDITS) - waiting;
+    const room = Math.min(quota, this.config.enrichment.maxQueuedPacks - waiting, affordable);
+    if (room <= 0) return; // keep price polling funded for the session
+    // Recent packs only, pre-sorted in SQL: at 24/7 volume the unanalyzed backlog grows by
+    // tens of thousands of packs a day. The locked ordering is applied exactly to the top rows.
     const rows = this.db
       .prepare(
-        `SELECT p.id, p.total_wallet_count, p.eligible_buy_usd, p.trigger_event_time_ms FROM pack_enrichment e JOIN packs p ON p.id = e.pack_id
-         WHERE e.namespace = ? AND e.status = 'not_requested' AND p.invalidated = 0`,
+        `SELECT p.id, p.total_wallet_count, p.eligible_buy_usd, p.trigger_event_time_ms FROM packs p JOIN pack_enrichment e ON e.pack_id = p.id
+         WHERE p.namespace = ? AND p.trigger_event_time_ms >= ? AND e.status = 'not_requested' AND p.invalidated = 0
+         ORDER BY p.total_wallet_count DESC, CAST(p.eligible_buy_usd AS REAL) DESC LIMIT ?`,
       )
-      .all(this.namespace) as Candidate[];
+      .all(this.namespace, this.clock.now() - CANDIDATE_WINDOW_MS, room + 20) as Candidate[];
     for (const c of orderCandidates(rows).slice(0, room)) {
-      if (!this.canAutoSpend(PACK_ENRICHMENT_CREDITS)) break;
       this.schedulePack(c.id, "auto");
       this.scheduledThisCycle++;
     }
   }
 
+  /**
+   * Profile the wallets that keep appearing in packs (at least three, active in the last
+   * day) that have no Nansen profile from the last 24 hours. Context only.
+   */
+  profileRepeatWallets(): number {
+    if (!this.session.current()) return 0;
+    const now = this.clock.now();
+    const rows = this.db
+      .prepare(
+        `SELECT s.wallet FROM wallet_pack_stats s
+         WHERE s.namespace = ? AND s.packs >= ? AND s.last_seen_ms >= ?
+           AND NOT EXISTS (SELECT 1 FROM enrichment_snapshots x WHERE x.namespace = s.namespace AND x.endpoint = 'profiler/address/pnl-summary'
+                           AND x.subject_id = s.wallet AND x.fetched_at_ms >= ?)
+           AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.namespace = s.namespace AND j.type = 'wallet_pnl' AND j.subject = s.wallet AND j.status IN ('queued', 'running'))
+         ORDER BY s.packs DESC, s.last_seen_ms DESC LIMIT ?`,
+      )
+      .all(this.namespace, REPEAT_WALLET_MIN_PACKS, now - DAY_MS, now - DAY_MS, REPEAT_WALLETS_PER_CYCLE) as { wallet: string }[];
+    let n = 0;
+    for (const { wallet } of rows) {
+      if (!this.canAutoSpend(REPEAT_WALLET_CREDITS)) break;
+      for (const type of ["wallet_pnl", "related_wallets"] as const) {
+        this.queue.enqueue({
+          namespace: this.namespace, campaignId: this.session.campaignId, lane: "BASE_ENRICHMENT", type, subject: wallet, packId: null,
+          payload: { wallet }, dedupeKey: `${this.namespace}|repeat|${type}|${wallet}`, requestedBy: "repeat_wallets",
+        });
+      }
+      n++;
+    }
+    return n;
+  }
+
+  /**
+   * Extra profiles beyond the spec's first three initial members (which stay unchanged and alone
+   * feed the base assessment): the largest buyer, and the member seen in the most earlier packs.
+   */
+  extraProfileWallets(packId: string, selected: string[]): { wallet: string; reason: "largest_buyer" | "repeat_wallet"; earlierPacks: number }[] {
+    const members = this.db
+      .prepare(
+        `SELECT m.wallet, m.eligible_buy_usd, COALESCE(s.packs, 1) - 1 AS earlier FROM pack_members m
+         LEFT JOIN wallet_pack_stats s ON s.namespace = m.namespace AND s.wallet = m.wallet WHERE m.pack_id = ?`,
+      )
+      .all(packId) as { wallet: string; eligible_buy_usd: string; earlier: number }[];
+    const skip = new Set(selected);
+    const out: { wallet: string; reason: "largest_buyer" | "repeat_wallet"; earlierPacks: number }[] = [];
+    const largest = members
+      .filter((m) => !skip.has(m.wallet))
+      .sort((a, b) => parseDecimal(b.eligible_buy_usd).comparedTo(parseDecimal(a.eligible_buy_usd)) || (a.wallet < b.wallet ? -1 : 1))[0];
+    if (largest) {
+      out.push({ wallet: largest.wallet, reason: "largest_buyer", earlierPacks: largest.earlier });
+      skip.add(largest.wallet);
+    }
+    const repeat = members.filter((m) => !skip.has(m.wallet) && m.earlier > 0).sort((a, b) => b.earlier - a.earlier || (a.wallet < b.wallet ? -1 : 1))[0];
+    if (repeat) out.push({ wallet: repeat.wallet, reason: "repeat_wallet", earlierPacks: repeat.earlier });
+    return out;
+  }
+
   /** Enqueue the P0 job set for one pack (also used by the operator enrich action). */
   schedulePack(packId: string, requestedBy: string): { jobIds: string[] } {
     const pack = this.db
-      .prepare("SELECT p.id, p.namespace, p.mint, p.triggered_at_ms, e.profile_wallets_json, e.relationship_wallets_json FROM packs p JOIN pack_enrichment e ON e.pack_id = p.id WHERE p.id = ?")
-      .get(packId) as { id: string; namespace: string; mint: string; triggered_at_ms: number; profile_wallets_json: string; relationship_wallets_json: string } | undefined;
+      .prepare("SELECT p.id, p.namespace, p.mint, e.profile_wallets_json, e.relationship_wallets_json FROM packs p JOIN pack_enrichment e ON e.pack_id = p.id WHERE p.id = ?")
+      .get(packId) as { id: string; namespace: string; mint: string; profile_wallets_json: string; relationship_wallets_json: string } | undefined;
     if (!pack) throw new Error("Pack not found");
     const profile = JSON.parse(pack.profile_wallets_json) as string[];
     const relationship = JSON.parse(pack.relationship_wallets_json) as string[];
+    const extras = this.extraProfileWallets(packId, profile);
     const now = this.clock.now();
     const campaignId = this.session.campaignId;
     const jobIds: string[] = [];
-    const add = (lane: "BASE_ENRICHMENT" | "SMART_MONEY", type: Parameters<JobQueue["enqueue"]>[0]["type"], subject: string, payload: Record<string, unknown>, nextAttemptAtMs?: number) => {
+    const add = (lane: "BASE_ENRICHMENT" | "SMART_MONEY", type: Parameters<JobQueue["enqueue"]>[0]["type"], subject: string, payload: Record<string, unknown>) => {
       const r = this.queue.enqueue({
         namespace: pack.namespace,
         campaignId,
@@ -160,7 +256,6 @@ export class EnrichmentScheduler {
         packId,
         payload,
         dedupeKey: `${pack.namespace}|${packId}|${type}|${subject}`,
-        nextAttemptAtMs,
         requestedBy,
       });
       jobIds.push(r.jobId);
@@ -173,22 +268,24 @@ export class EnrichmentScheduler {
         add("BASE_ENRICHMENT", "wallet_dex", w, { wallet: w });
       }
       for (const w of relationship) add("BASE_ENRICHMENT", "related_wallets", w, { wallet: w });
-      const followupAt = Math.max(now, pack.triggered_at_ms + BALANCE_FOLLOWUP_DELAY_MS);
-      for (const w of relationship) add("BASE_ENRICHMENT", "balance_followup", w, { wallet: w, mint: pack.mint, scheduledAtMs: followupAt }, followupAt);
-      if (this.config.smartMoney.enabled) {
-        add("SMART_MONEY", "sm_token_lookup", pack.mint, { mint: pack.mint });
-        add("SMART_MONEY", "sm_netflow", pack.mint, { mint: pack.mint });
+      // Extra profiles; wallets profiled in the last day are served from stored snapshots at no cost.
+      for (const x of extras) {
+        add("BASE_ENRICHMENT", "wallet_pnl", x.wallet, { wallet: x.wallet });
+        add("BASE_ENRICHMENT", "related_wallets", x.wallet, { wallet: x.wallet });
       }
+      // Holding versus selling comes from on-chain trades (After the pack), so the paid 5-minute
+      // balance check is not scheduled. Netflow follows the token lookup when Smart Money bought.
+      if (this.config.smartMoney.enabled) add("SMART_MONEY", "sm_token_lookup", pack.mint, { mint: pack.mint });
       this.db
-        .prepare("UPDATE pack_enrichment SET status = 'scheduled', requested_by = ?, scheduled_at_ms = ? WHERE pack_id = ?")
-        .run(requestedBy, now, packId);
+        .prepare("UPDATE pack_enrichment SET status = 'scheduled', requested_by = ?, scheduled_at_ms = ?, extra_profile_wallets_json = ? WHERE pack_id = ?")
+        .run(requestedBy, now, JSON.stringify(extras), packId);
     })();
     this.assessment.refresh(packId);
     return { jobIds };
   }
 
   enqueueGlobalFeed(): void {
-    if (!this.config.smartMoney.enabled) return;
+    if (!this.config.smartMoney.feedEnabled) return;
     if (this.session.blockReason("SMART_MONEY") !== null) return;
     if (!this.canAutoSpend(GLOBAL_FEED_CREDITS)) return;
     // Coalesced: an existing queued or running feed job absorbs this tick.
@@ -199,7 +296,7 @@ export class EnrichmentScheduler {
       type: "sm_global_feed",
       subject: "global",
       packId: null,
-      payload: {},
+      payload: { maxTokenAgeDays: this.config.smartMoney.feedMaxTokenAgeDays },
       dedupeKey: `${this.namespace}|sm_global_feed`,
       requestedBy: "scheduler",
     });

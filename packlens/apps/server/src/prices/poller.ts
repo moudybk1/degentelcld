@@ -4,6 +4,7 @@ import { OHLCV, type OhlcvReq } from "../adapters/nansen/endpoints.js";
 import type { NansenClient } from "../adapters/nansen/client.js";
 import { log } from "../lib/log.js";
 import type { SessionManager } from "../scheduler/session.js";
+import { quotePriceStatus, type QuotePriceFeed, type QuotePriceStatus } from "./feed.js";
 import type { PriceStore } from "./store.js";
 
 export function isoNoMillis(ms: number): string {
@@ -16,7 +17,7 @@ export function isoNoMillis(ms: number): string {
  * start of the current minute (`to` is exclusive for 1m), so only closed
  * candles are returned. Late ticks coalesce instead of accumulating.
  */
-export class PricePoller {
+export class PricePoller implements QuotePriceFeed {
   private timer: NodeJS.Timeout | null = null;
   private running = false;
   private anchorMs: number | null = null;
@@ -31,7 +32,9 @@ export class PricePoller {
     private readonly client: NansenClient,
     private readonly store: PriceStore,
     private readonly session: SessionManager,
-  ) {}
+  ) {
+    if (config.price.policy.provider !== "nansen") throw new Error("PricePoller polls Nansen candles; use PythPriceFeed for PRICE_PROVIDER=pyth");
+  }
 
   start(): void {
     if (this.timer) return;
@@ -82,10 +85,11 @@ export class PricePoller {
 
   async pollQuote(q: QuoteAsset): Promise<void> {
     const policy = this.config.price.policy;
+    const timeframe = policy.timeframe === "5m" ? "5m" : "1m";
     const now = this.clock.now();
     const to = Math.floor(now / policy.candleMs) * policy.candleMs;
     const from = to - policy.rangeMs;
-    const req: OhlcvReq = { chain: "solana", token_address: q.priceMint, timeframe: policy.timeframe, date: { from: isoNoMillis(from), to: isoNoMillis(to) } };
+    const req: OhlcvReq = { chain: "solana", token_address: q.priceMint, timeframe, date: { from: isoNoMillis(from), to: isoNoMillis(to) } };
     this.polls++;
     const res = await this.client.call(OHLCV, req, { lane: "PRICE", purpose: "quote_price", jobId: null, persist: false, bypassCache: true });
     if (!res.ok) {
@@ -106,8 +110,8 @@ export class PricePoller {
       candles: res.normalized.data.candles,
       providerRequestId: res.providerRequestId,
       attemptId: res.attemptIds[res.attemptIds.length - 1] ?? null,
-      source: `nansen:tgm/token-ohlcv:${policy.timeframe}:closed_only`,
-      timeframe: policy.timeframe,
+      source: `nansen:tgm/token-ohlcv:${timeframe}:closed_only`,
+      timeframe,
       policyVersion: policy.version,
     });
     this.lastError = null;
@@ -115,13 +119,7 @@ export class PricePoller {
   }
 
   /** Price availability for USD eligibility, evaluated for "now". */
-  status(q: QuoteAsset): { state: "valid" | "waiting_for_price" | "stale"; latestCandleStartMs: number | null; latestAvailableAtMs: number | null } {
-    const latest = this.store.latest(q.priceMint);
-    if (!latest) return { state: "waiting_for_price", latestCandleStartMs: null, latestAvailableAtMs: null };
-    const newest = latest.candles.length ? latest.candles[latest.candles.length - 1]!.intervalStartMs : null;
-    const now = this.clock.now();
-    const p = this.config.price.policy;
-    const ok = newest !== null && now - newest <= p.maxCandleAgeMs && now - latest.availableAtMs <= p.maxFetchAgeMs;
-    return { state: ok ? "valid" : "stale", latestCandleStartMs: newest, latestAvailableAtMs: latest.availableAtMs };
+  status(q: QuoteAsset): QuotePriceStatus {
+    return quotePriceStatus(this.store, q, this.config.price.policy, this.clock.now());
   }
 }

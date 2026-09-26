@@ -7,10 +7,11 @@ import { useNsHref } from "../state/namespace";
 import { Search } from "./Search";
 import { ModeBadge } from "./ui";
 import symbolUrl from "../assets/brand/symbol-red-160.png";
+import { BASELINE_RULE, ruleUsd } from "../lib/rule";
 
 /**
  * Whether new packs can be detected right now, in words. A connected stream
- * is not enough: without a fresh quote price no buy can pass the $20 check,
+ * is not enough: without a fresh quote price no buy can pass the USD check,
  * so the status says detection is paused instead of showing a green light.
  */
 function healthView(status: SourceStatus | null, pulseHealth: string | undefined, lastMessageAt: string | null, priceState: string | undefined, now: number): { dot: string; text: string; title: string } {
@@ -22,12 +23,13 @@ function healthView(status: SourceStatus | null, pulseHealth: string | undefined
   if (health === "connecting") return { dot: "warn", text: "Connecting to source…", title: "" };
   if (health === "disconnected") return { dot: "bad", text: "Source disconnected", title: "The pump.fun stream is disconnected; new packs cannot be detected until it reconnects." };
   if (priceState === "stale" || priceState === "waiting_for_price") {
+    const check = `${ruleUsd(status.detector ?? BASELINE_RULE)} check`;
     return {
       dot: "warn",
       text: "Detection paused",
       title: status.analysisPaused.paused
-        ? `${status.analysisPaused.reason} Without a fresh Nansen price, new buys cannot pass the $20 check, so no new packs form.`
-        : "Without a fresh Nansen price, new buys cannot pass the $20 check, so no new packs form.",
+        ? `${status.analysisPaused.reason} Without a fresh SOL price, new buys cannot pass the ${check}, so no new packs form.`
+        : `Without a fresh SOL price, new buys cannot pass the ${check}, so no new packs form.`,
     };
   }
   const age = lastMessageAt ? relative(lastMessageAt, now) : "no events yet";
@@ -53,6 +55,9 @@ export function TopBar({ status }: { status: SourceStatus | null }) {
         <nav className="nav" aria-label="Main">
           <NavLink to={href("/")} end className={({ isActive }) => (isActive ? "active" : "")}>
             Pack Radar
+          </NavLink>
+          <NavLink to={href("/wallets")} className={({ isActive }) => (isActive ? "active" : "")}>
+            Wallets
           </NavLink>
           <NavLink to={href("/smart-money")} className={({ isActive }) => (isActive ? "active" : "")}>
             Smart Money

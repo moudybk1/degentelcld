@@ -78,7 +78,11 @@ export function NetflowPanel({ netflow }: { netflow: Panel<Netflow> }) {
         </div>
       ) : (
         <p className="small muted" style={{ margin: 0 }}>
-          {netflow.state.availability === "empty" ? "Nansen returned no netflow for this token." : "Netflow has not been checked for this token yet."}
+          {netflow.state.availability === "empty"
+            ? "Nansen returned no netflow for this token."
+            : netflow.state.availability === "queued"
+              ? "Netflow is being checked."
+              : "Not checked: netflow is requested only after Smart Money buyers are observed, since Nansen rarely has netflow for brand-new tokens."}
         </p>
       )}
       <p className="tiny muted" style={{ margin: "14px 0 0" }}>

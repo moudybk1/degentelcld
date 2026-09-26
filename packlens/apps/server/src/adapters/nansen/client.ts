@@ -240,7 +240,10 @@ export class NansenClient {
           lastFailure = {
             ok: false,
             code: "budget_paused",
-            message: `Analysis paused: ${reservation.available} credits available for this lane, ${def.expectedCredits} needed.`,
+            message:
+              reservation.reason === "daily_cap"
+                ? `Analysis paused: the daily Nansen credit cap is reached (${reservation.available} left today, ${def.expectedCredits} needed); it resets at 00:00 UTC.`
+                : `Analysis paused: ${reservation.available} credits available for this lane, ${def.expectedCredits} needed.`,
             snapshotId: null,
             attemptIds,
             retryable: false,

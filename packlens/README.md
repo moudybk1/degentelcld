@@ -50,7 +50,7 @@ Start with the in-app **Guide** (`/guide`). In short:
 
 - **Facts versus context.** Pack membership, amounts, prices after the pack, and sells come from the chain. Nansen data is context, always labeled with its source, period, and state, and never changes which packs exist.
 - **After the pack** compares every later pump.fun trade with the pack's own average entry price in SOL (total SOL paid ÷ total tokens bought by the pack's evidence buys), so SOL/USD moves do not distort it. *Pack wallets sold* counts members that sold after their own first buy, with the share of their tokens sold and time to first sale. After a token completes its bonding curve, later trades happen elsewhere and are not observed; the page says so.
-- **Earlier packs with these wallets** lists earlier packs that share at least two wallets and how those tokens moved over the next 15 minutes (peak and final), from stored trades.
+- **Earlier packs with these wallets** lists packs from the previous 7 days that share at least two wallets and how those tokens moved over the next 15 minutes (peak and final), from stored trades.
 - **Reading this pack** is generated from these facts with fixed templates, not a model. *Worth checking* points at facts such as members already selling, one wallet dominating the buying, same-second entries, or a price already far above the entry. It never recommends buying or selling and always states that the next price move is unknown.
 
 Everything is computed from the local database; none of it spends Nansen credits.
@@ -64,6 +64,7 @@ Everything is computed from the local database; none of it spends Nansen credits
   - Expansion: until **40 seconds from the first evidence**, while the rolling window still has three eligible wallets.
   - Cooldown: **120 seconds after the last newly accepted evidence**; a qualifying window exactly at expiry may trigger.
   - Ordering: a watermark trails the clock by **2 seconds**; events arriving behind it are *late* and never create live alerts.
+- **Custom rule (owner-approved, 2026-09-26):** `PACK_MIN_WALLETS` and `PACK_MIN_TRADE_USD` may differ from the baseline; the windows, expansion, cooldown and ordering above stay locked. A custom rule runs under its own version (`PACK_MIN_WALLETS=5 PACK_MIN_TRADE_USD=25` → `pack-custom-5w-25usd-v1`) and live namespace (`live:<campaign>:5w-25usd`), so its packs never mix with baseline packs; the site states the active rule and marks it as custom. Switching starts a fresh radar; the earlier namespace stays readable with `?namespace=live:<campaign>`. Recorded datasets replay under the rule they name. The deployed site runs 5 wallets / $25.
 - **Indicators (`patterns-v1`):** initial and all-member entry span, buy-size coefficient of variation (population), largest buyer share (not supply concentration), and co-occurrence pairs with earlier packs on other tokens within 24 hours. No combined score.
 - **Coverage limits:** only pump.fun bonding-curve trades are observed (not PumpSwap or other DEXes). Collector disconnects are recorded as gaps and not backfilled in P0; affected packs say so.
 
@@ -74,6 +75,20 @@ USD value = traded SOL × a Nansen OHLCV **closed** candle close for WSOL, chose
 The P0 baseline is **1-minute** candles (policy `nansen-1m-closed-v1`, candle start at most 120 s before the trade). During live verification on 2026-09-25, Nansen answered every 1-minute WSOL request with HTTP 500 `query_timeout` after 30 seconds, even for a single minute, while 1-minute candles for ordinary tokens and 5-minute WSOL candles returned in under a second. With no price, no buy can pass the $20 check.
 
 With the project owner's approval, live runs use the **documented fallback** `PRICE_TIMEFRAME=5m` (policy `nansen-5m-closed-v1`): still Nansen, still closed candles only, candle start at most **15 minutes** before the trade, snapshot freshness still 120 s. The policy version is recorded on every price snapshot and valuation and shown in the header, on the radar, and in each pack's evidence and coverage. Detection rules are unchanged. Values near $20 are rougher estimates under the fallback. Set `PRICE_TIMEFRAME=1m` to return to the baseline.
+
+### Pyth on-chain price for 24/7 operation
+
+Polling Nansen for the SOL price costs about 2,900 credits a day, so for 24/7 operation the project owner approved (2026-09-26) `PRICE_PROVIDER=pyth` (policy `pyth-onchain-v1`). The app reads Pyth's sponsored SOL/USD price account on Solana (`7UVimffxr9ow1uXYxsr4LHAcV58mLzhmwaeKvJ1pjLiE`) through `SOLANA_RPC_HTTP_URL` every 5 s. It needs no key and spends no credits. Every read checks the account owner (Pyth Solana Receiver), the account type, full Wormhole verification, the feed ID, a positive price, and a confidence interval of at most 1%. Pyth updates the account about once a minute, and a snapshot is stored only when the publish time advances. A buy uses the newest price **published at or before the buy** and known before it arrived, at most `PRICE_MAX_AGE_SECONDS` (default 120 s) old. Every snapshot and valuation records `pyth-onchain-v1`, and the radar, pack evidence, and coverage say so. Detection rules are unchanged, and Nansen remains the source of all wallet, token, and Smart Money context.
+
+With Pyth, the Nansen session is optional:
+
+| Settings | Nansen |
+|---|---|
+| `NANSEN_SESSION_END_AT` set | A bounded session, as in the baseline. |
+| No session end, `NANSEN_DAILY_CREDIT_CAP` above 0 | **Continuous:** each session covers the rest of the UTC day and renews on first use; all paid calls stay within the daily cap and the campaign budget. |
+| Neither | **Off:** packs are detected, nothing is spent, and Nansen panels say *Not checked yet*. |
+
+`SMART_MONEY_FEED_ENABLED=false` stops the shared global Smart Money feed (5 credits per poll; about 3,600 credits a day at the default 2-minute poll) while keeping per-pack Smart Money lookups. `SMART_MONEY_FEED_MAX_TOKEN_AGE_DAYS=1` limits that feed to tokens at most a day old (Nansen's `token_bought_age_days` filter), and the Smart Money page then shows pump.fun launches first, with how soon after launch each wallet traded (launch times come from the pump.fun stream). The deployed site polls it every 10 minutes (`SMART_MONEY_POLL_SECONDS=600`, about 720 credits a day). `ENRICHMENT_AUTO_PACKS_PER_CYCLE=0` limits base analysis to packs an operator chooses. With a daily cap, automatic analysis is paced across the UTC day: each cycle schedules only the packs the paced allowance covers (a pack still waiting to run counts at its full 23 credits), so a short cycle such as `ENRICHMENT_CYCLE_SECONDS=60` gives a steady rhythm around the clock, and a higher cap gives more packs per hour. While it waits for the pace, the site does not report analysis as paused. The operator page shows the price source, the Nansen mode, and today's usage against the cap.
 
 ## Smart Money: periods, matching, netflow, partial data
 
@@ -147,9 +162,23 @@ npm run build
 APP_MODE=live npm run start      # http://127.0.0.1:8787
 ```
 
-Open `/operator`, log in with `ADMIN_TOKEN`, and watch credits, usage, and jobs. Base enrichment picks up to `ENRICHMENT_AUTO_PACKS_PER_CYCLE` new packs every 5 minutes (largest first; never by Smart Money). Any other live pack can be enriched from its detail page with **Run base analysis**, and **Pin token for demo** keeps its Smart Money context refreshed. Public pages never trigger paid requests.
+Open `/operator`, log in with `ADMIN_TOKEN`, and watch credits, usage, and jobs. Base enrichment picks up to `ENRICHMENT_AUTO_PACKS_PER_CYCLE` new packs every `ENRICHMENT_CYCLE_SECONDS` (default 5 minutes; largest first; never by Smart Money). Any other live pack can be enriched from its detail page with **Run base analysis**, and **Pin token for demo** keeps its Smart Money context refreshed. Public pages never trigger paid requests.
 
 To record a real window for a reproducible demo: `npm run dataset:export -- --id recorded-demo-1 --from <ISO> --to <ISO>`, then `npm run replay -- --dataset recorded-demo-1 --mode recorded-arrival`. Replays keep original times, pinned prices, and admission decisions, and are labeled **Replay**.
+
+## Run 24/7 on a server
+
+Tested on Ubuntu 24.04 with Node 24 (4 vCPU, 8 GB RAM; about 400 MB of disk per two hours of live trades before the 24-hour cleanup, with packs kept):
+
+1. Create a user without a login shell and copy the project (without `node_modules`, `dist`, `data`, `.env`) to `/opt/degentel/app`; as that user run `npm ci && npm run build`.
+2. Put the secrets in `/opt/degentel/app/.env` (mode 600) with `PRICE_PROVIDER=pyth` and either `NANSEN_DAILY_CREDIT_CAP` (continuous) or nothing (Nansen off). Remove `NANSEN_SESSION_END_AT`.
+3. Install [`deploy/degentel.service`](deploy/degentel.service) as a systemd unit (`systemctl enable --now degentel`). It keeps the database in `/opt/degentel/data`, listens on `127.0.0.1:8787` only, and restarts on failure. Settings in `/opt/degentel/mode.env` (for example `APP_MODE=live`) override `.env`.
+4. Open it privately through an SSH tunnel: `ssh -N -L 8787:127.0.0.1:8787 <user>@<server>`, then browse `http://127.0.0.1:8787`.
+5. For a public site, put [Caddy](https://caddyserver.com) in front (automatic HTTPS; example in [`deploy/Caddyfile`](deploy/Caddyfile)), open only ports 22, 80, and 443 in the firewall, and set `PUBLIC_HOSTING=true`, `SECURE_COOKIES=true`, `TRUST_PROXY=loopback`, and `ALLOWED_ORIGINS=https://<your domain>`.
+
+**Public hosting protections.** The API, collector, and detector share one process and SQLite reads are synchronous, so heavy page reads are run one at a time with a return to the event loop between them; ticks and stream messages always get a turn (40 simultaneous large pack pages held the loop for at most 0.33 s, against the 2 s watermark). With `PUBLIC_HOSTING=true`, heavy reads are also shared for 5 s, each client gets 600 API requests per minute and 6 live streams, anonymous analytics are capped (30 per client per minute, 20,000 per day), and excess reads get `503` with `Retry-After` instead of queueing.
+
+Logs: `journalctl -u degentel -f`. Back up the database with the service stopped, or with `sqlite3 packlens.sqlite ".backup copy.sqlite"`.
 
 ## Commands
 
@@ -179,13 +208,14 @@ To record a real window for a reproducible demo: `npm run dataset:export -- --id
 | `tgm/token-ohlcv` | WSOL quote price (5m fallback or 1m baseline), polled every 30 s in a session | 1 | none (poll) |
 | `tgm/token-information` | Token facts, supply for concentration | 1 | 120 s |
 | `tgm/holders` (`premium_labels=false`) | First 20 holders | 5 | 300 s |
-| `profiler/address/pnl-summary` | 30-day PnL for the first three initial members | 1 | 60 min |
-| `profiler/dex-trades` | 7-day trade sample (one page of 100) | 1 | 5 min |
-| `profiler/address/related-wallets` | Relationships for the first two members | 1 | 15 min |
-| `profiler/address/current-balance` | Pack-token balance 5 minutes after the trigger | 1 | 60 s |
+| `profiler/address/pnl-summary` | 30-day PnL (to 00:00 UTC) for the first three initial members, the largest buyer, the most repeated member, and top repeat wallets | 1 | 24 h per wallet |
+| `profiler/dex-trades` | 7-day trade sample (one page of 100) for the first three initial members | 1 | 60 min |
+| `profiler/address/related-wallets` | Relationships for the first two members, the extra profiles, and top repeat wallets | 1 | 7 days per wallet |
+| `profiler/address/current-balance` | No longer scheduled: 55 of 56 live checks were empty; holding versus selling comes from on-chain trades (*After the pack*) | 1 | 60 s |
 | `smart-money/dex-trades` | Global feed every 120 s; targeted lookup per pack token | 5 | 120 s per mint |
-| `smart-money/netflow` | Per-token netflow | 5 | 5 min |
+| `smart-money/netflow` | Per-token netflow, requested only after the token lookup observed Smart Money buyers (26 of 27 live lookups for new tokens were empty) | 5 | 5 min |
 
+- **Credit-aware usage (2026-09-26):** one pack costs at most 23 credits (19 without extra profiles), and wallet data profiled in the last day is reused on every pack the wallet joins. `wallet_pack_stats` counts packs per wallet (kept by a trigger); the **Repeat wallets** page (`/wallets`, `GET /api/wallets/repeat`) lists wallets that keep appearing in packs with their Nansen PnL, win rate, relationships, and Smart Money labels, and every enrichment cycle profiles up to three active repeat wallets without a recent profile. With `NANSEN_DAILY_CREDIT_CAP`, automatic work may use 90% of the cap, paced across the UTC day; operators can use the rest. Automatic candidates are packs from the last 30 minutes.
 - **Ledger:** every attempt, retry, and page is a row with HTTP and schema outcomes, quoted and actual credits (`X-Nansen-Credits-Used`), and provider request ID. Credits are **reserved atomically before sending**, settled with the actual cost, and kept **unresolved** when the outcome is unknown (timeouts). Two price polls stay reserved from enrichment. The budget limits credits, **never the number of calls**; 100 relevant successful calls is a reporting target only.
 - **Rate and concurrency:** 2 concurrent requests, 30 per minute, lane priority PRICE → BASE_ENRICHMENT → SMART_MONEY, `Retry-After` honored, at most two retries with full jitter.
 - **Failures:** 401/403 and 402 pause paid dispatch; 400/422 are never retried; schema changes fail normalization loudly and still settle the charge; a failed refresh keeps the previous snapshot readable as *update delayed*.
@@ -218,7 +248,7 @@ Full report with commands and outputs: [`docs/test-report.md`](docs/test-report.
 - Holder concentration uses verified total supply; the first holder page describes only the observed portion. `CHECK_CONCENTRATION` requires an explicit `HOLDER_CONCENTRATION_THRESHOLD`.
 - A relationship returned by the provider does not prove common ownership; Smart Money is a provider category, not a prediction.
 - *After the pack* sees pump.fun bonding-curve trades only (no transfers, no other venues, nothing after graduation), and live trades older than 24 hours are pruned unless they are pack evidence, so long histories may be incomplete. Past moves do not predict future moves.
-- Single instance, local by default. Public hosting needs HTTPS, `SECURE_COOKIES=true`, and `ALLOWED_ORIGINS`.
+- Single instance, local by default. Public hosting needs HTTPS and the settings in [Run 24/7 on a server](#run-247-on-a-server).
 
 ## P0 and P1 status
 

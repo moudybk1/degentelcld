@@ -17,6 +17,7 @@ import {
   type TokenState,
 } from "../detector/core.js";
 import { computePatterns, COOCCURRENCE_LOOKBACK_MS, type EarlierPackMembership } from "../patterns/indicators.js";
+import { MEMBER_ENTRY_MARGIN_MS } from "../config.js";
 import { parseDecimal } from "../lib/decimal.js";
 import { OutboxBus, writeOutbox } from "./outbox.js";
 
@@ -48,6 +49,8 @@ export function toDetectorInput(e: TradeEvent, admission: DetectorInput["admissi
   };
 }
 
+type EarlierRow = { id: string; mint: string; trigger_event_time_ms: number; wallet: string };
+
 /**
  * One writer per namespace. Consumption, timers, checkpoints, evidence, and
  * outbox rows commit in a single DB transaction; in-memory state is replaced
@@ -55,6 +58,21 @@ export function toDetectorInput(e: TradeEvent, admission: DetectorInput["admissi
  */
 export class DetectorEngine {
   private readonly states = new Map<string, TokenState>();
+  /**
+   * Earlier-pack memberships per collecting pack and wallet, looked up once when the
+   * wallet joins, so each pack update queries only new wallets. A wallet's entries are
+   * forgotten whenever it joins another pack (overlapping packs), and a pack's memo is
+   * dropped at freeze.
+   */
+  private readonly earlierByPack = new Map<string, Map<string, EarlierRow[]>>();
+  // Prepared once: preparing per tick keeps native SQLite memory growing faster than GC frees it.
+  private readonly checkpointStmt;
+  private readonly markAppliedStmt;
+  private readonly dueTimersStmt;
+  private readonly nextTimerStmt;
+  private readonly upsertCheckpointStmt;
+  private readonly deleteCheckpointStmt;
+  private readonly watermarkStmt;
 
   constructor(
     private readonly db: Db,
@@ -63,19 +81,36 @@ export class DetectorEngine {
     private readonly clock: Clock,
     private readonly outbox: OutboxBus,
     private readonly hooks: EngineHooks = {},
-  ) {}
+  ) {
+    this.checkpointStmt = db.prepare(
+      "SELECT buffer_json, active_pack_id, suppress_until_ms, config_version FROM detector_checkpoints WHERE namespace = ? AND chain = 'solana' AND mint = ?",
+    );
+    this.markAppliedStmt = db.prepare(
+      "UPDATE trade_events SET detector_applied = 1, eligibility = ?, eligibility_reason = ? WHERE namespace = ? AND event_id = ? AND detector_applied = 0",
+    );
+    this.dueTimersStmt = db.prepare("SELECT mint FROM packs WHERE namespace = ? AND state = 'collecting' AND expansion_end_ms < ?");
+    this.nextTimerStmt = db.prepare("SELECT MIN(expansion_end_ms) AS end_ms FROM packs WHERE namespace = ? AND state = 'collecting'");
+    this.upsertCheckpointStmt = db.prepare(
+      `INSERT INTO detector_checkpoints (namespace, chain, mint, buffer_json, active_pack_id, first_event_time_ms, last_accepted_time_ms, suppress_until_ms, config_version, updated_at_ms)
+       VALUES (?, 'solana', ?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT(namespace, chain, mint) DO UPDATE SET buffer_json = excluded.buffer_json, active_pack_id = excluded.active_pack_id,
+         first_event_time_ms = excluded.first_event_time_ms, last_accepted_time_ms = excluded.last_accepted_time_ms,
+         suppress_until_ms = excluded.suppress_until_ms, config_version = excluded.config_version, updated_at_ms = excluded.updated_at_ms`,
+    );
+    this.deleteCheckpointStmt = db.prepare("DELETE FROM detector_checkpoints WHERE namespace = ? AND chain = 'solana' AND mint = ?");
+    this.watermarkStmt = db.prepare("UPDATE namespaces SET watermark_ms = ? WHERE id = ?");
+  }
 
   /** Drop cached state (used after a failed commit or in tests). */
   resetCache(): void {
     this.states.clear();
+    this.earlierByPack.clear();
   }
 
   private loadState(mint: string): TokenState {
     const cached = this.states.get(mint);
     if (cached) return cached;
-    const row = this.db
-      .prepare("SELECT buffer_json, active_pack_id, suppress_until_ms, config_version FROM detector_checkpoints WHERE namespace = ? AND chain = 'solana' AND mint = ?")
-      .get(this.namespace, mint) as CheckpointRow | undefined;
+    const row = this.checkpointStmt.get(this.namespace, mint) as CheckpointRow | undefined;
     const state = newTokenState(this.namespace, mint, this.config.version);
     if (row) {
       if (row.config_version !== this.config.version) throw new Error(`Checkpoint for ${mint} uses config ${row.config_version}`);
@@ -170,30 +205,24 @@ export class DetectorEngine {
       return s;
     };
 
-    const markApplied = this.db.prepare(
-      "UPDATE trade_events SET detector_applied = 1, eligibility = ?, eligibility_reason = ? WHERE namespace = ? AND event_id = ? AND detector_applied = 0",
-    );
-
     const tx = this.db.transaction(() => {
       for (const ev of events) {
         const input = toDetectorInput(ev, "admitted");
         const pre = classifyEligibility(input, this.config);
         if (!pre.eligible) {
-          markApplied.run("ineligible", pre.reason, this.namespace, ev.eventId);
+          this.markAppliedStmt.run("ineligible", pre.reason, this.namespace, ev.eventId);
           continue;
         }
         const state = getWorking(ev.tokenAddress);
         const result = consumeOrdered(state, input, this.config, now);
         eligibleCount++;
-        const info = markApplied.run("eligible", "eligible", this.namespace, ev.eventId);
+        const info = this.markAppliedStmt.run("eligible", "eligible", this.namespace, ev.eventId);
         if (info.changes !== 1) throw new Error(`Event ${ev.eventId} was already applied or is missing`);
         dirty.add(ev.tokenAddress);
         for (const effect of result.effects) this.persistEffect(effect, now, createdPackIds);
       }
       // Timers after draining events at or below the watermark.
-      const collecting = this.db
-        .prepare("SELECT mint FROM packs WHERE namespace = ? AND state = 'collecting' AND expansion_end_ms < ?")
-        .all(this.namespace, newWatermarkMs) as { mint: string }[];
+      const collecting = this.dueTimersStmt.all(this.namespace, newWatermarkMs) as { mint: string }[];
       for (const { mint } of collecting) {
         const state = getWorking(mint);
         for (const effect of advanceWatermark(state, newWatermarkMs)) {
@@ -201,20 +230,12 @@ export class DetectorEngine {
           dirty.add(mint);
         }
       }
-      const upsert = this.db.prepare(
-        `INSERT INTO detector_checkpoints (namespace, chain, mint, buffer_json, active_pack_id, first_event_time_ms, last_accepted_time_ms, suppress_until_ms, config_version, updated_at_ms)
-         VALUES (?, 'solana', ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(namespace, chain, mint) DO UPDATE SET buffer_json = excluded.buffer_json, active_pack_id = excluded.active_pack_id,
-           first_event_time_ms = excluded.first_event_time_ms, last_accepted_time_ms = excluded.last_accepted_time_ms,
-           suppress_until_ms = excluded.suppress_until_ms, config_version = excluded.config_version, updated_at_ms = excluded.updated_at_ms`,
-      );
-      const del = this.db.prepare("DELETE FROM detector_checkpoints WHERE namespace = ? AND chain = 'solana' AND mint = ?");
       for (const mint of dirty) {
         const s = working.get(mint)!;
         if (isDisposable(s, newWatermarkMs, this.config)) {
-          del.run(this.namespace, mint);
+          this.deleteCheckpointStmt.run(this.namespace, mint);
         } else {
-          upsert.run(
+          this.upsertCheckpointStmt.run(
             this.namespace,
             mint,
             JSON.stringify(s.buffer),
@@ -227,7 +248,7 @@ export class DetectorEngine {
           );
         }
       }
-      this.db.prepare("UPDATE namespaces SET watermark_ms = ? WHERE id = ?").run(newWatermarkMs, this.namespace);
+      this.watermarkStmt.run(newWatermarkMs, this.namespace);
     });
 
     // If the transaction throws, nothing was committed and the cached state stays untouched (T37).
@@ -242,23 +263,42 @@ export class DetectorEngine {
     return { createdPackIds, eligible: eligibleCount };
   }
 
+  /** Smallest watermark at which applyTick closes an expansion window, or null when no pack is collecting. */
+  nextTimerWatermarkMs(): number | null {
+    const row = this.nextTimerStmt.get(this.namespace) as { end_ms: number | null };
+    return row.end_ms === null ? null : row.end_ms + 1;
+  }
+
   private pruneCache(watermarkMs: number): void {
     for (const [mint, s] of this.states) if (isDisposable(s, watermarkMs, this.config)) this.states.delete(mint);
   }
 
   private earlierPacks(pack: ActivePack, wallets: string[]): EarlierPackMembership[] {
     if (wallets.length === 0) return [];
-    const placeholders = wallets.map(() => "?").join(",");
-    const rows = this.db
-      .prepare(
-        `SELECT p.id, p.mint, p.trigger_event_time_ms, pm.wallet FROM pack_members pm
-         JOIN packs p ON p.id = pm.pack_id AND p.namespace = pm.namespace
-         WHERE pm.namespace = ? AND pm.wallet IN (${placeholders}) AND p.mint <> ? AND p.invalidated = 0
-           AND p.trigger_event_time_ms < ? AND p.trigger_event_time_ms >= ?`,
-      )
-      .all(this.namespace, ...wallets, pack.mint, pack.triggerEventTimeMs, pack.triggerEventTimeMs - COOCCURRENCE_LOOKBACK_MS) as {
-      id: string; mint: string; trigger_event_time_ms: number; wallet: string;
-    }[];
+    let memo = this.earlierByPack.get(pack.id);
+    if (!memo) {
+      memo = new Map();
+      this.earlierByPack.set(pack.id, memo);
+    }
+    const missing = wallets.filter((w) => !memo.has(w));
+    const from = pack.triggerEventTimeMs - COOCCURRENCE_LOOKBACK_MS;
+    for (let i = 0; i < missing.length; i += 500) {
+      const chunk = missing.slice(i, i + 500);
+      const found = this.db
+        .prepare(
+          // CROSS JOIN keeps members (wallet + entry-time index) as the outer loop; SQLite
+          // otherwise starts from every pack in the window and rescans each wallet's history.
+          `SELECT p.id, p.mint, p.trigger_event_time_ms, pm.wallet FROM pack_members pm
+           CROSS JOIN packs p ON p.id = pm.pack_id AND p.namespace = pm.namespace
+           WHERE pm.namespace = ? AND pm.wallet IN (${chunk.map(() => "?").join(",")})
+             AND pm.first_entry_time_ms >= ? AND pm.first_entry_time_ms < ?
+             AND p.mint <> ? AND p.invalidated = 0 AND p.trigger_event_time_ms < ? AND p.trigger_event_time_ms >= ?`,
+        )
+        .all(this.namespace, ...chunk, from - MEMBER_ENTRY_MARGIN_MS, pack.triggerEventTimeMs + MEMBER_ENTRY_MARGIN_MS, pack.mint, pack.triggerEventTimeMs, from) as EarlierRow[];
+      for (const w of chunk) memo.set(w, []);
+      for (const r of found) memo.get(r.wallet)!.push(r);
+    }
+    const rows = wallets.flatMap((w) => memo.get(w) ?? []);
     const map = new Map<string, EarlierPackMembership>();
     for (const r of rows) {
       const m = map.get(r.id) ?? { packId: r.id, mint: r.mint, triggerEventTimeMs: r.trigger_event_time_ms, wallets: [] };
@@ -266,6 +306,11 @@ export class DetectorEngine {
       map.set(r.id, m);
     }
     return [...map.values()];
+  }
+
+  /** Joining a pack can make it an earlier pack for another collecting pack; look those wallets up again. */
+  private forgetEarlier(packId: string, wallets: string[]): void {
+    for (const [id, memo] of this.earlierByPack) if (id !== packId) for (const w of wallets) memo.delete(w);
   }
 
   private patternsFor(pack: ActivePack, members: PackMember[]) {
@@ -282,6 +327,7 @@ export class DetectorEngine {
   private persistEffect(effect: CoreEffect, nowMs: number, created: string[]): void {
     const pack = effect.pack;
     if (effect.kind === "pack.frozen") {
+      this.earlierByPack.delete(pack.id);
       const info = this.db
         .prepare("UPDATE packs SET state = 'frozen', core_version = ?, frozen_at_ms = ? WHERE id = ? AND namespace = ? AND state = 'collecting'")
         .run(pack.coreVersion, nowMs, pack.id, this.namespace);
@@ -327,6 +373,7 @@ export class DetectorEngine {
       for (const m of members) {
         upsertMember.run(pack.id, this.namespace, m.walletAddress, m.memberKind, m.firstEntryTimeMs, m.initialFirstEntryTimeMs, m.joinedAtEventTimeMs, m.eligibleBuyUsd, JSON.stringify(m.eventIds));
       }
+      this.forgetEarlier(pack.id, members.map((m) => m.walletAddress));
       const profileWallets = selectProfileWallets(pack, 3);
       if (profileWallets.length < 3) throw new Error("A pack must have at least three selected initial members");
       this.db
@@ -360,6 +407,7 @@ export class DetectorEngine {
     for (const m of members) {
       upsertMember.run(pack.id, this.namespace, m.walletAddress, m.memberKind, m.firstEntryTimeMs, m.initialFirstEntryTimeMs, m.joinedAtEventTimeMs, m.eligibleBuyUsd, JSON.stringify(m.eventIds));
     }
+    this.forgetEarlier(pack.id, effect.newWallets);
     writeOutbox(this.db, this.namespace, "pack.updated", pack.id, pack.coreVersion, {
       packId: pack.id, coreVersion: pack.coreVersion, evidenceVersion: pack.evidenceVersion, newWallets: effect.newWallets.length,
     }, nowMs);

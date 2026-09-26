@@ -36,13 +36,13 @@ export function rowFlags(item: PackListItem): { label: string; title: string }[]
   return flags;
 }
 
-/** One plain sentence about how the pack formed, e.g. "3 wallets each bought $20 or more within 6 seconds. 3 more joined later (6 in total). Together they bought $554.22." */
-export function packLead(core: Pack, patterns: PatternMetrics): string {
+/** One plain sentence about how the pack formed; `minUsd` is the rule's per-buy minimum, e.g. "3 wallets each bought $20 or more within 6 seconds. 3 more joined later (6 in total). Together they bought $554.22." */
+export function packLead(core: Pack, patterns: PatternMetrics, minUsd: string): string {
   const span = patterns.initialEntrySpanMs;
   const s = span / 1000;
   const when = span === 0 ? "in the same second" : `within ${Number.isInteger(s) ? s : s.toFixed(1)} ${s === 1 ? "second" : "seconds"}`;
   const joined = core.totalWalletCount - core.initialWalletCount;
-  return `${core.initialWalletCount} wallets each bought $20 or more ${when}.${joined > 0 ? ` ${joined} more joined later (${core.totalWalletCount} in total).` : ""} Together they bought ${usd(core.eligibleBuyUsd)}.`;
+  return `${core.initialWalletCount} wallets each bought ${minUsd} or more ${when}.${joined > 0 ? ` ${joined} more joined later (${core.totalWalletCount} in total).` : ""} Together they bought ${usd(core.eligibleBuyUsd)}.`;
 }
 
 export function duration(ms: number): string {

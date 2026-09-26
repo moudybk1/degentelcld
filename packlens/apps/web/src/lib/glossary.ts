@@ -1,6 +1,7 @@
 /**
  * One vocabulary for tooltips and the Guide page, so every explanation of a
- * number reads the same wherever it appears.
+ * number reads the same wherever it appears. {wallets}, {usd}, {window} and
+ * {expansion} are filled with the viewed namespace's rule (see lib/rule.tsx).
  */
 export const GLOSSARY = {
   uniqueWallets: {
@@ -9,11 +10,11 @@ export const GLOSSARY = {
   },
   packBuys: {
     term: "Pack buys",
-    text: "The total of the pack's own buys, each at least $20. It is not the token's total trading volume.",
+    text: "The total of the pack's own buys, each at least {usd}. It is not the token's total trading volume.",
   },
   pack: {
     term: "Pack",
-    text: "A group of 3 or more different wallets that each bought at least $20 of the same pump.fun token within 20 seconds. It shows buying happened together, not who is behind it or what the price will do.",
+    text: "A group of {wallets} or more different wallets that each bought at least {usd} of the same pump.fun token within {window} seconds. It shows buying happened together, not who is behind it or what the price will do.",
   },
   entrySpread: {
     term: "Entry window",
@@ -21,11 +22,11 @@ export const GLOSSARY = {
   },
   initialExpanded: {
     term: "Started it or joined later",
-    text: "The wallets that started the pack bought within 20 seconds of each other (3 or more). Wallets that joined later bought within 40 seconds of the first buy while the group was still active.",
+    text: "The wallets that started the pack bought within {window} seconds of each other ({wallets} or more). Wallets that joined later bought within {expansion} seconds of the first buy while the group was still active.",
   },
   packState: {
     term: "Forming or final",
-    text: "Forming: the pack can still gain wallets, up to 40 seconds after its first buy. Final: that window has closed and the list of wallets is fixed.",
+    text: "Forming: the pack can still gain wallets, up to {expansion} seconds after its first buy. Final: that window has closed and the list of wallets is fixed.",
   },
   sizeCV: {
     term: "Buy size variation",
@@ -57,7 +58,7 @@ export const GLOSSARY = {
   },
   earlierPacks: {
     term: "Earlier packs with these wallets",
-    text: "Earlier packs that include at least two of these wallets, with how that token moved in the 15 minutes after that pack formed. Past moves do not predict the next one.",
+    text: "Packs from the previous 7 days that include at least two of these wallets, with how that token moved in the 15 minutes after that pack formed. Past moves do not predict the next one.",
   },
   smTokenBuyers: {
     term: "Smart Money on the token",
@@ -81,7 +82,7 @@ export const GLOSSARY = {
   },
   priceEstimate: {
     term: "USD values",
-    text: "USD values use a Nansen SOL price from a recent closed candle, pinned when the buy arrived. They are estimates, especially near $20.",
+    text: "USD values use a recent SOL price (Pyth's on-chain price or a Nansen closed candle, as labeled on each buy), pinned when the buy arrived. They are estimates, especially near {usd}.",
   },
 } as const;
 

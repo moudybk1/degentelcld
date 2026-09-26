@@ -5,9 +5,11 @@ import { EventsProvider } from "./api/events";
 import { useApi } from "./api/hooks";
 import { TopBar } from "./components/TopBar";
 import { useNamespace, useNsHref } from "./state/namespace";
+import { BASELINE_RULE, RuleProvider, ruleSentence } from "./lib/rule";
 import { RadarPage } from "./pages/RadarPage";
 import { PackDetailPage } from "./pages/PackDetailPage";
 import { WalletPage } from "./pages/WalletPage";
+import { RepeatWalletsPage } from "./pages/RepeatWalletsPage";
 import { TokenPage } from "./pages/TokenPage";
 import { SmartMoneyPage } from "./pages/SmartMoneyPage";
 import { OperatorPage } from "./pages/OperatorPage";
@@ -31,7 +33,9 @@ function Shell() {
     const t = setInterval(status.reload, 15_000);
     return () => clearInterval(t);
   }, [status.reload]);
+  const rule = status.data?.detector ?? BASELINE_RULE;
   return (
+    <RuleProvider value={rule}>
     <EventsProvider namespace={namespace}>
       <div className="ambient" aria-hidden="true" />
       <div className="app">
@@ -44,6 +48,7 @@ function Shell() {
           <Routes>
             <Route path="/" element={<RadarPage status={status.data} />} />
             <Route path="/packs/:id" element={<PackDetailPage />} />
+            <Route path="/wallets" element={<RepeatWalletsPage />} />
             <Route path="/wallets/solana/:address" element={<WalletPage />} />
             <Route path="/tokens/solana/:mint" element={<TokenPage />} />
             <Route path="/smart-money" element={<SmartMoneyPage />} />
@@ -62,7 +67,7 @@ function Shell() {
               </div>
             </div>
             <div className="footer-meta">
-              <span>Detection: at least 3 unique wallets, $20 per eligible buy, within 20 seconds. Smart Money is context only.</span>
+              <span>Detection: {ruleSentence(rule)}. Smart Money is context only.</span>
               <span>Research tool. Not trading advice. Times are shown in UTC.</span>
               <span>
                 <NavLink to={href("/guide")}>Guide</NavLink> · <NavLink to={href("/operator")}>Operator</NavLink>
@@ -72,6 +77,7 @@ function Shell() {
         </footer>
       </div>
     </EventsProvider>
+    </RuleProvider>
   );
 }
 

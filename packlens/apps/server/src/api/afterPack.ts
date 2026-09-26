@@ -8,6 +8,7 @@
 import type { AfterPackData, AfterPackMarker, AfterPackPoint, AfterPackSummary, EarlierPack, MemberExit } from "@packlens/contracts";
 import type { Db } from "../db/connection.js";
 import { canonical, Decimal, parseDecimal } from "../lib/decimal.js";
+import { MEMBER_ENTRY_MARGIN_MS } from "../config.js";
 
 /** Time buckets for the chart; each keeps its low, high, and last trade, so spikes survive downsampling. */
 const SERIES_BUCKETS = 240;
@@ -293,18 +294,24 @@ export function afterDetail(db: Db, pack: PackBasics, members: { walletAddress: 
   };
 }
 
+/** Earlier packs are looked up within 7 days (member entries bounded by the same window, index-served). */
+export const EARLIER_LOOKBACK_MS = 7 * 24 * 60 * 60_000;
+
 /** Earlier packs sharing at least two of these wallets, with how their token moved in the next 15 minutes. */
 export function earlierPacks(db: Db, pack: PackBasics, wallets: string[]): EarlierPack[] {
   if (wallets.length < 2) return [];
   const placeholders = wallets.map(() => "?").join(",");
+  // CROSS JOIN: start from the members' (wallet, entry time) index, never from every pack in the window.
   const rows = db
     .prepare(
       `SELECT p.id, p.mint, p.trigger_event_time_ms, p.first_event_time_ms, p.total_wallet_count, p.eligible_buy_usd, COUNT(*) AS shared
-       FROM pack_members pm JOIN packs p ON p.id = pm.pack_id AND p.namespace = pm.namespace
-       WHERE pm.namespace = ? AND pm.wallet IN (${placeholders}) AND p.id <> ? AND p.trigger_event_time_ms < ? AND p.invalidated = 0
+       FROM pack_members pm CROSS JOIN packs p ON p.id = pm.pack_id AND p.namespace = pm.namespace
+       WHERE pm.namespace = ? AND pm.wallet IN (${placeholders}) AND pm.first_entry_time_ms >= ? AND pm.first_entry_time_ms < ?
+         AND p.id <> ? AND p.trigger_event_time_ms < ? AND p.trigger_event_time_ms >= ? AND p.invalidated = 0
        GROUP BY p.id HAVING COUNT(*) >= 2 ORDER BY p.trigger_event_time_ms DESC LIMIT 10`,
     )
-    .all(pack.namespace, ...wallets, pack.id, pack.trigger_event_time_ms) as {
+    .all(pack.namespace, ...wallets, pack.trigger_event_time_ms - EARLIER_LOOKBACK_MS - MEMBER_ENTRY_MARGIN_MS, pack.trigger_event_time_ms + MEMBER_ENTRY_MARGIN_MS,
+      pack.id, pack.trigger_event_time_ms, pack.trigger_event_time_ms - EARLIER_LOOKBACK_MS) as {
     id: string; mint: string; trigger_event_time_ms: number; first_event_time_ms: number; total_wallet_count: number; eligible_buy_usd: string; shared: number;
   }[];
   return rows.map((r) => {

@@ -108,6 +108,28 @@ describe("automatic work keeps price polling funded for the session", async () =
     const s = new EnrichmentScheduler(db, clock, config, "live:c", new JobQueue(db, clock), session, new AssessmentService(db, clock, new OutboxBus(), null), ledger);
     // 1 hour at 30 s polling = 120 polls; 200 - 2 - 120 = 78 credits of headroom.
     expect(s.automaticHeadroom()).toBe(78);
-    expect(PACK_ENRICHMENT_CREDITS).toBe(26);
+    expect(PACK_ENRICHMENT_CREDITS).toBe(23);
+  });
+
+  it("with a daily cap and Pyth prices, automatic spending is paced across the UTC day", () => {
+    const db = testDb();
+    const day = Math.floor(T0 / 86_400_000) * 86_400_000;
+    const clock = new VirtualClock(day + 6 * 3_600_000); // 06:00 UTC: a quarter of the day
+    const base = testConfig({ PRICE_PROVIDER: "pyth" });
+    const config = { ...base, nansen: { ...base.nansen, continuous: true, dailyCreditCap: 1000 } };
+    const ledger = new BudgetLedger(db, "c", clock, () => 0, 1000);
+    ledger.ensureCampaign(100_000, null);
+    const session = new SessionManager(db, clock, config, "c");
+    const s = new EnrichmentScheduler(db, clock, config, "live:c", new JobQueue(db, clock), session, new AssessmentService(db, clock, new OutboxBus(), null), ledger);
+    // 90% of 1,000 for automatic work, paced: (6 h + 1 h burst) / 24 h → 262 credits by 06:00.
+    expect(s.automaticHeadroom()).toBe(262);
+    const reserve = (id: string, amount: number) =>
+      ledger.reserve({ attemptId: id, lane: "BASE_ENRICHMENT", amount, endpoint: "e", parameterHash: "h", purpose: "p", subjectId: null, jobId: null, retryOfAttemptId: null });
+    expect(reserve("a", 250).ok).toBe(true);
+    expect(s.automaticHeadroom()).toBe(12);
+    // Operators are limited only by the cap itself.
+    expect(reserve("manual", 500).ok).toBe(true);
+    clock.advance(18 * 3_600_000 - 1); // 23:59:59.999: the full automatic share is available
+    expect(s.automaticHeadroom()).toBe(900 - 750);
   });
 });

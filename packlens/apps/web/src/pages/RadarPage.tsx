@@ -15,6 +15,7 @@ import { Empty, ErrorNote, LoadingBlock, Note, Skeleton, Stat, Tag } from "../co
 import { clockUtc, int, relative, seconds, span, timeUtc, usdCompact } from "../lib/format";
 import type { GlossaryKey } from "../lib/glossary";
 import { useNamespace } from "../state/namespace";
+import { ruleUsd, useRule } from "../lib/rule";
 
 type RangeKey = "1h" | "6h" | "24h" | "7d" | "all";
 type Range = { kind: "preset"; key: RangeKey } | { kind: "custom"; fromMs: number; toMs: number };
@@ -103,6 +104,8 @@ export function RadarPage({ status }: { status: SourceStatus | null }) {
   const namespace = useNamespace();
   const now = useNow(5000);
   const narrow = useMediaQuery("(max-width: 860px)");
+  const rule = useRule();
+  const usdMin = ruleUsd(rule);
   const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
   const [draft, setDraft] = useState({ minUsd: "", mint: "" });
   const [filterError, setFilterError] = useState<string | null>(null);
@@ -393,19 +396,33 @@ export function RadarPage({ status }: { status: SourceStatus | null }) {
         )}
         {priceBlocked && status?.analysisPaused.paused ? (
           <Note tone="yellow" icon="warn">
-            <strong>New packs are on hold.</strong> {status.analysisPaused.reason} Without a fresh Nansen quote price, new buys cannot be valued, so none can pass the $20 check. Stored packs and what happened after them stay
+            <strong>New packs are on hold.</strong> {status.analysisPaused.reason} Without a fresh SOL price, new buys cannot be valued, so none can pass the {usdMin} check. Stored packs and what happened after them stay
             readable. An operator can add credits to resume.
           </Note>
         ) : priceBlocked ? (
           <Note tone="yellow" icon="warn">
             {status?.price.state === "stale"
-              ? "Quote price is stale. Collection continues, but new buys cannot pass the $20 check until a valid Nansen price arrives."
-              : "Waiting for the first valid Nansen quote price. Buys are recorded but cannot pass the $20 check yet."}
+              ? `The SOL price is stale. Collection continues, but new buys cannot pass the ${usdMin} check until a valid ${status.price.provider === "pyth" ? "Pyth" : "Nansen"} price arrives.`
+              : `Waiting for the first valid ${status?.price.provider === "pyth" ? "Pyth" : "Nansen"} SOL price. Buys are recorded but cannot pass the ${usdMin} check yet.`}
           </Note>
         ) : null}
-        {status && status.mode === "live" && !status.price.isBaseline && (
+        {!rule.isBaseline && (
           <p className="inline-note">
-            Buys are valued with the documented {status.price.timeframe} price fallback ({status.price.policyVersion}), so values near $20 are rougher estimates.
+            Packs here follow a custom rule: {rule.minUniqueWallets} or more wallets, each buying {usdMin} or more within {rule.triggerWindowSeconds} seconds ({rule.version}). The spec baseline is 3 wallets and $20.
+          </p>
+        )}
+        {status && status.mode === "live" && status.price.provider === "pyth" && (
+          <p className="inline-note">
+            Buys are valued with Pyth&apos;s on-chain SOL/USD price ({status.price.policyVersion}), published at most two minutes before each buy.
+            <InfoTip
+              label="the Pyth price"
+              text="Pyth publishes a verified SOL/USD price on Solana about once a minute. Each buy uses the newest price published before it, fixed when the buy arrived. It costs no Nansen credits; Nansen is used for wallet, token, and Smart Money context. Detection rules are unchanged."
+            />
+          </p>
+        )}
+        {status && status.mode === "live" && status.price.provider === "nansen" && !status.price.isBaseline && (
+          <p className="inline-note">
+            Buys are valued with the documented {status.price.timeframe} price fallback ({status.price.policyVersion}), so values near {usdMin} are rougher estimates.
             <InfoTip
               label="the price fallback"
               text={`Nansen 1m SOL candles time out upstream, so buys are valued with the latest closed ${status.price.timeframe} candle, up to 15 minutes old. Detection rules are unchanged.`}
@@ -444,8 +461,14 @@ export function RadarPage({ status }: { status: SourceStatus | null }) {
           </div>
           <div className="field inline">
             <label htmlFor="f-wallets">Min. wallets</label>
-            <select id="f-wallets" className="select" value={filters.minWallets} onChange={(e) => setFilters((f) => ({ ...f, minWallets: e.target.value }))}>
-              {["3", "4", "5", "6", "8", "10", "20", "50"].map((v) => (
+            <select
+              id="f-wallets"
+              className="select"
+              value={String(Math.max(Number(filters.minWallets), rule.minUniqueWallets))}
+              // The rule's minimum shows every pack, so it maps back to the default filter.
+              onChange={(e) => setFilters((f) => ({ ...f, minWallets: Number(e.target.value) <= rule.minUniqueWallets ? DEFAULT_FILTERS.minWallets : e.target.value }))}
+            >
+              {[...new Set([String(rule.minUniqueWallets), ...["3", "4", "5", "6", "8", "10", "20", "50"].filter((v) => Number(v) > rule.minUniqueWallets)])].map((v) => (
                 <option key={v} value={v}>
                   {v}+
                 </option>
@@ -644,7 +667,9 @@ export function RadarPage({ status }: { status: SourceStatus | null }) {
               </button>
             </Empty>
           ) : (
-            <Empty title="No packs detected yet">The source is connected. A pack appears when at least three wallets each buy $20 or more of the same token within 20 seconds.</Empty>
+            <Empty title="No packs detected yet">
+              The source is connected. A pack appears when at least {rule.minUniqueWallets} wallets each buy {usdMin} or more of the same token within {rule.triggerWindowSeconds} seconds.
+            </Empty>
           )
         ) : (
           <div className={loading ? "feed-body refreshing" : "feed-body"}>

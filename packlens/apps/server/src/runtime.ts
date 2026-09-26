@@ -1,6 +1,6 @@
-import type { SourceStatus, UsageSummary } from "@packlens/contracts";
+import type { DetectionRule, SourceStatus, UsageSummary } from "@packlens/contracts";
 import { SystemClock, type Clock } from "./clock.js";
-import { BASELINE_CONFIG_VERSION, type AppConfig } from "./config.js";
+import { BASELINE_DETECTOR_CONFIG, detectorConfigForVersion, liveNamespace, PYTH_SOL_USD_ACCOUNT, type AppConfig } from "./config.js";
 import { migrate, openDatabase, type Db } from "./db/connection.js";
 import { join } from "node:path";
 import { OutboxBus } from "./ingest/outbox.js";
@@ -8,6 +8,8 @@ import { DetectorEngine } from "./ingest/engine.js";
 import { IngestPipeline } from "./ingest/pipeline.js";
 import { PriceStore } from "./prices/store.js";
 import { PricePoller } from "./prices/poller.js";
+import { PythPriceFeed } from "./prices/pyth.js";
+import type { QuotePriceFeed } from "./prices/feed.js";
 import { PumpCollector, type RawTransaction } from "./collector/collector.js";
 import { decodeLogs, DECODER_VERSION } from "./collector/decoder.js";
 import { normalizeTrade } from "./normalization/normalize.js";
@@ -44,7 +46,7 @@ export type LiveComponents = {
   scheduler: EnrichmentScheduler;
   smartMoney: SmartMoneyService;
   assessment: AssessmentService;
-  pricePoller: PricePoller;
+  pricePoller: QuotePriceFeed;
   decoder: DecoderCounters;
 };
 
@@ -67,17 +69,19 @@ export class Runtime {
     readonly clock: Clock,
     private readonly fetchImpl: FetchLike | undefined,
     private readonly startCollector: boolean,
+    private readonly rpcFetchImpl: FetchLike | undefined = undefined,
   ) {
-    this.primaryNamespace = config.mode === "live" ? `live:${config.nansen.campaignId}` : `fixture:${config.fixtureDatasetId}`;
+    this.primaryNamespace = config.mode === "live" ? liveNamespace(config) : `fixture:${config.fixtureDatasetId}`;
     this.queue = new JobQueue(db, clock);
   }
 
   /** `startCollector: false` keeps tests off the network; production always collects. */
-  static create(config: AppConfig, opts: { clock?: Clock; fetchImpl?: FetchLike; db?: Db; startCollector?: boolean } = {}): Runtime {
+  /** `rpcFetchImpl` answers Solana RPC reads (the Pyth price) in tests; production uses global fetch. */
+  static create(config: AppConfig, opts: { clock?: Clock; fetchImpl?: FetchLike; rpcFetchImpl?: FetchLike; db?: Db; startCollector?: boolean } = {}): Runtime {
     const clock = opts.clock ?? new SystemClock();
     const db = opts.db ?? openDatabase(config.databasePath);
     migrate(db, join(config.rootDir, "migrations"), clock.now());
-    return new Runtime(config, db, clock, opts.fetchImpl, opts.startCollector ?? true);
+    return new Runtime(config, db, clock, opts.fetchImpl, opts.startCollector ?? true, opts.rpcFetchImpl);
   }
 
   /**
@@ -132,7 +136,7 @@ export class Runtime {
         `INSERT INTO replay_runs (id, namespace, dataset_id, dataset_hash, config_version, mode, clock_json, started_at_ms, finished_at_ms, result_hash, report_json)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(runId, ns, datasetId, manifest.sha256, BASELINE_CONFIG_VERSION, mode, JSON.stringify({ kind: "virtual", tickMs: 250 }), startedAt, this.clock.now(), result.digest,
+      .run(runId, ns, datasetId, manifest.sha256, dataset.configVersion, mode, JSON.stringify({ kind: "virtual", tickMs: 250 }), startedAt, this.clock.now(), result.digest,
         JSON.stringify({ events: result.events, late: result.late, eligible: result.eligible, packs: result.packIds.length, duplicates: result.duplicates }));
     return { runId, namespace: ns, digest: result.digest, packCount: result.packIds.length };
   }
@@ -160,9 +164,18 @@ export class Runtime {
     const ns = this.primaryNamespace;
     const db = this.db;
     const clock = this.clock;
-    db.prepare("INSERT INTO namespaces (id, mode, created_at_ms, label) VALUES (?, 'live', ?, ?) ON CONFLICT(id) DO NOTHING").run(ns, clock.now(), `Live campaign ${cfg.nansen.campaignId}`);
-    const priceReserve = () => cfg.price.reservePolls * cfg.price.quotes.length * 1;
-    const ledger = new BudgetLedger(db, cfg.nansen.campaignId, clock, priceReserve);
+    const baseNs = `live:${cfg.nansen.campaignId}`;
+    const label = ns === baseNs ? `Live campaign ${cfg.nansen.campaignId}` : `Live campaign ${cfg.nansen.campaignId}, rule ${cfg.detector.version}`;
+    const created = db.prepare("INSERT INTO namespaces (id, mode, created_at_ms, label) VALUES (?, 'live', ?, ?) ON CONFLICT(id) DO NOTHING").run(ns, clock.now(), label);
+    if (created.changes === 1 && ns !== baseNs) {
+      // A new rule starts with no packs, but token identity (name, symbol, launch time) is a chain
+      // fact independent of the rule: carry over the last day so recent tokens keep their names.
+      const cols = (db.prepare("PRAGMA table_info(tokens)").all() as { name: string }[]).map((c) => c.name).filter((c) => c !== "namespace").join(", ");
+      db.prepare(`INSERT OR IGNORE INTO tokens (namespace, ${cols}) SELECT ?, ${cols} FROM tokens WHERE namespace = ? AND first_seen_at_ms >= ?`).run(ns, baseNs, clock.now() - 24 * 60 * 60_000);
+    }
+    // Pyth prices cost no credits, so nothing is held back for price polling.
+    const priceReserve = () => (cfg.price.provider === "nansen" ? cfg.price.reservePolls * cfg.price.quotes.length * 1 : 0);
+    const ledger = new BudgetLedger(db, cfg.nansen.campaignId, clock, priceReserve, cfg.nansen.dailyCreditCap);
     ledger.ensureCampaign(cfg.nansen.budgetCredits!, cfg.nansen.sessionEndAtMs);
     const session = new SessionManager(db, clock, cfg, cfg.nansen.campaignId);
     const gate = new DispatchGate(cfg.nansen.maxConcurrency, cfg.nansen.maxRequestsPerMinute, clock);
@@ -177,7 +190,12 @@ export class Runtime {
     const engine = new DetectorEngine(db, ns, cfg.detector, clock, this.outbox, { onPacksCreated: () => scheduler.onPacksCreated() });
     const pipeline = new IngestPipeline(db, ns, clock, engine, cfg.detector.reorderToleranceMs);
     const worker = new EnrichmentWorker(db, clock, this.queue, client, smartMoney, assessment, session, cfg.nansen.maxConcurrency);
-    const pricePoller = new PricePoller(cfg, clock, client, priceStore, session);
+    const pricePoller: QuotePriceFeed =
+      cfg.price.provider === "pyth" ? new PythPriceFeed(cfg, clock, priceStore, this.rpcFetchImpl) : new PricePoller(cfg, clock, client, priceStore, session);
+    const priceSource =
+      cfg.price.provider === "pyth"
+        ? `pyth:onchain:${PYTH_SOL_USD_ACCOUNT}:${cfg.price.policy.version}`
+        : `nansen:tgm/token-ohlcv:${cfg.price.policy.timeframe}:closed_only:${cfg.price.policy.version}`;
     const decoder: DecoderCounters = { decodedEvents: 0, buys: 0, sells: 0, undecodable: 0, truncatedLogs: 0, creates: 0 };
 
     const upsertToken = db.prepare(
@@ -210,7 +228,7 @@ export class Runtime {
             namespace: ns, sourceMode: "live", signature: tx.signature, slot: tx.slot, receivedAtMs: tx.receivedAtMs, normalizedAtMs: clock.now(),
             quotes: cfg.price.quotes, snapshotsFor: (m) => priceStore.snapshotsFor(m),
             maxPriceAgeMs: { maxCandleAgeMs: cfg.price.policy.maxCandleAgeMs, maxFetchAgeMs: cfg.price.policy.maxFetchAgeMs },
-            priceSource: `nansen:tgm/token-ohlcv:${cfg.price.policy.timeframe}:closed_only:${cfg.price.policy.version}`,
+            priceSource,
           });
           pipeline.ingest(ev);
         } catch (err) {
@@ -224,11 +242,13 @@ export class Runtime {
     // Display-only logos for packed tokens; off whenever the collector is (tests stay off the network).
     this.tokenImages = this.startCollector ? new TokenImageResolver(db, clock, ns) : null;
 
-    // Start the live session bounded by NANSEN_SESSION_END_AT.
-    if (!session.current()) session.start({ startedBy: "startup" });
+    // Start the live session bounded by NANSEN_SESSION_END_AT. Continuous sessions start
+    // on first use; with Pyth prices and neither setting, Nansen stays off.
+    if (cfg.nansen.sessionEndAtMs !== null && !session.current()) session.start({ startedBy: "startup" });
 
     this.live = { pipeline, engine, priceStore, collector, client, ledger, gate, session, queue: this.queue, worker, scheduler, smartMoney, assessment, pricePoller, decoder };
-    pricePoller.start();
+    // The Pyth feed reads the chain, so it follows the collector's network switch (tests stay offline).
+    if (cfg.price.provider === "nansen" || this.startCollector || this.rpcFetchImpl) pricePoller.start();
     worker.start();
     scheduler.start();
     collector?.start();
@@ -241,7 +261,14 @@ export class Runtime {
       }
     }, 250);
     this.tickTimer.unref?.();
-    log("info", "runtime", "Live runtime started", { namespace: ns, sessionEndsAt: new Date(session.current()!.ends_at_ms).toISOString() });
+    const s = session.current();
+    log("info", "runtime", "Live runtime started", {
+      namespace: ns,
+      price: cfg.price.policy.version,
+      nansen: s ? (cfg.nansen.continuous ? "continuous" : "session") : "off",
+      sessionEndsAt: s ? new Date(s.ends_at_ms).toISOString() : null,
+      dailyCreditCap: cfg.nansen.dailyCreditCap,
+    });
   }
 
   async stop(): Promise<void> {
@@ -269,6 +296,33 @@ export class Runtime {
       mode: n.mode,
       createdAt: new Date(n.created_at_ms).toISOString(),
     }));
+  }
+
+  /** The rule a namespace's packs were detected under: live uses the configured rule, replays their dataset's. */
+  detectionRule(namespace: string): DetectionRule {
+    let d = this.config.detector;
+    if (!(this.live && namespace === this.primaryNamespace)) {
+      const row =
+        (this.db.prepare("SELECT config_version AS v FROM replay_runs WHERE namespace = ? ORDER BY started_at_ms DESC LIMIT 1").get(namespace) as { v: string } | undefined) ??
+        (this.db.prepare("SELECT config_version AS v FROM packs WHERE namespace = ? LIMIT 1").get(namespace) as { v: string } | undefined);
+      d = (row && detectorConfigForVersion(row.v)) ?? BASELINE_DETECTOR_CONFIG;
+    }
+    return {
+      version: d.version, minUniqueWallets: d.minUniqueWallets, minTradeUsd: d.minTradeUsd,
+      triggerWindowSeconds: d.triggerWindowMs / 1000, expansionSeconds: d.expansionFromStartMs / 1000, isBaseline: d.version === BASELINE_DETECTOR_CONFIG.version,
+    };
+  }
+
+  private readonly statusMemo = new Map<string, { at: number; value: SourceStatus }>();
+
+  /** status() shared by every live-stream connection for up to `maxAgeMs` of wall-clock time. */
+  sharedStatus(namespace: string, maxAgeMs = 4000): SourceStatus {
+    const now = Date.now();
+    const hit = this.statusMemo.get(namespace);
+    if (hit && now - hit.at < maxAgeMs) return hit.value;
+    const value = this.status(namespace);
+    this.statusMemo.set(namespace, { at: now, value });
+    return value;
   }
 
   status(namespace: string): SourceStatus {
@@ -310,6 +364,7 @@ export class Runtime {
         latestCandleStart: priceStatus?.latestCandleStartMs ? new Date(priceStatus.latestCandleStartMs).toISOString() : null,
         latestSnapshotAvailableAt: priceStatus?.latestAvailableAtMs ? new Date(priceStatus.latestAvailableAtMs).toISOString() : null,
         quoteMints: this.config.price.quotes.map((x) => x.priceMint),
+        provider: this.config.price.policy.provider,
         timeframe: this.config.price.policy.timeframe,
         policyVersion: this.config.price.policy.version,
         isBaseline: this.config.price.policy.isBaseline,
@@ -357,14 +412,28 @@ export class Runtime {
         if (p.reason === "auth") return { paused: true, reason: "Nansen access failed; check the API key." };
         if (p.reason === "payment") return { paused: true, reason: "Nansen reported insufficient credits." };
         const t = this.live.ledger.totals();
+        const pyth = this.config.price.provider === "pyth";
+        if (pyth && !this.live.session.current()) {
+          return { paused: true, reason: "Nansen analysis is off (no session or daily credit cap is configured)." };
+        }
         if (t.remaining - t.priceReserve <= 0) return { paused: true, reason: "Configured credit budget reached; analysis paused." };
+        if (t.dailyCap !== null && t.dailyCap - t.usedToday < PACK_ENRICHMENT_CREDITS) {
+          return { paused: true, reason: `Today's Nansen credit cap is used (${t.usedToday} of ${t.dailyCap}); analysis resumes at 00:00 UTC.` };
+        }
         const headroom = this.live.scheduler.automaticHeadroom();
-        if (headroom !== null && headroom < PACK_ENRICHMENT_CREDITS) {
-          return { paused: true, reason: "Automatic analysis paused: the remaining credits are reserved for price polling until the session ends. Operators can still analyze packs manually." };
+        // Waiting for the daily pace to allow the next pack is normal operation, not a pause.
+        if (headroom !== null && headroom < PACK_ENRICHMENT_CREDITS && !this.live.scheduler.isPacing(PACK_ENRICHMENT_CREDITS)) {
+          return {
+            paused: true,
+            reason: pyth
+              ? "Automatic analysis paused: not enough credits left in the budget. Operators can still analyze packs manually."
+              : "Automatic analysis paused: the remaining credits are reserved for price polling until the session ends. Operators can still analyze packs manually.",
+          };
         }
         return { paused: false, reason: null };
       })(),
       namespaces: this.namespaces(),
+      detector: this.detectionRule(namespace),
     };
   }
 
@@ -397,6 +466,8 @@ export class Runtime {
         unresolved: t?.unresolved ?? 0,
         available: t ? Math.max(0, t.remaining) : null,
         priceReserve: t?.priceReserve ?? 0,
+        dailyCap: t?.dailyCap ?? null,
+        usedToday: t?.usedToday ?? 0,
         lastReportedRemaining: this.live?.client.lastReportedRemaining ?? null,
       },
       attempts: {

@@ -129,12 +129,21 @@ test("token page without a pack says so, and Smart Money activity cannot create 
   await page.goto("/smart-money");
   await expect(page.getByRole("heading", { level: 1 })).toContainText("Smart Money");
   await expect(page.getByText("they never create or change packs")).toBeVisible();
+  // pump.fun launches first, with how soon after launch; "All tokens" widens the list.
+  await expect(page.getByRole("button", { name: "pump.fun launches" })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByRole("columnheader", { name: "After launch" })).toBeVisible();
+  const pumpRows = await page.getByRole("row").count();
+  await page.getByRole("button", { name: "All tokens" }).click();
+  await expect(page.getByRole("button", { name: "All tokens" })).toHaveAttribute("aria-pressed", "true");
+  await expect.poll(() => page.getByRole("row").count()).toBeGreaterThanOrEqual(pumpRows);
   await page.getByRole("row", { name: /GRVL/ }).first().getByRole("link", { name: "GRVL" }).click();
   await expect(page.getByText("No pack detected in the monitored source")).toBeVisible();
 });
 
 test("keyboard: open a pack from the radar without a mouse", async ({ page }) => {
   await page.goto("/");
+  // Wait for the overview: its highlight links render above the feed, so "first" must not change after focusing.
+  await expect(page.locator(".highlights .rank-row").first()).toBeVisible();
   const link = page.getByRole("link", { name: /Lantern Moth/ }).first();
   await link.focus();
   await expect(link).toBeFocused();
@@ -314,4 +323,16 @@ test("unknown pack and route show clear messages", async ({ page }) => {
   await expect(page.getByText("Pack not found")).toBeVisible();
   await page.goto("/nowhere");
   await expect(page.getByText("This page does not exist.")).toBeVisible();
+});
+
+test("repeat wallets: reachable from the top bar, explains its sources, and fits 360 px", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("navigation", { name: "Main" }).getByRole("link", { name: "Wallets" }).click();
+  await expect(page.getByRole("heading", { level: 1 })).toHaveText("Repeat wallets");
+  await expect(page.getByText("Pack counts come from the chain; profiles, labels, and relationships come from Nansen.")).toBeVisible();
+  await page.getByRole("button", { name: "All time" }).click();
+  await expect(page.getByRole("button", { name: "All time" })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator("table.table, .empty").first()).toBeVisible();
+  await page.setViewportSize({ width: 360, height: 780 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
 });

@@ -89,6 +89,36 @@ describe("replay determinism", () => {
     expect(r.digest).toBe(ref.digest);
   });
 
+  it("co-occurrence includes a pack exactly 24 h earlier, excludes one a second older, and counts members who join later", () => {
+    const DAY = 86_400;
+    const earlier = [ev("p1", "A", 0, "20", MINT2), ev("p2", "B", 1, "20", MINT2), ev("p3", "C", 2, "20", MINT2), ev("p4", "E", 3, "20", MINT2)]; // triggers at 2 s
+    const later = (offset: number, id: string) => [
+      ev(`${id}1`, "A", DAY + offset, "20"), ev(`${id}2`, "B", DAY + offset + 1, "20"), ev(`${id}3`, "D", DAY + offset + 2, "20"), // triggers at 24 h after the earlier trigger + offset
+      ev(`${id}4`, "E", DAY + offset + 12, "20"), // joins during expansion
+    ];
+    const pairsOf = (ns: string) =>
+      (db.prepare("SELECT patterns_json FROM packs WHERE namespace = ? AND mint = ?").all(ns, MINT) as { patterns_json: string }[]).map((r) => JSON.parse(r.patterns_json).cooccurrencePairCount as number);
+    const db = testDb();
+    run(db, dataset([...earlier, ...later(0, "on")]), "replay:edge-in");
+    // Exactly 24 h: A-B, A-E, and B-E (E joined later) all co-occur with the earlier pack.
+    expect(pairsOf("replay:edge-in")).toEqual([3]);
+    run(db, dataset([...earlier, ...later(1, "off")]), "replay:edge-out");
+    expect(pairsOf("replay:edge-out")).toEqual([0]);
+  });
+
+  it("co-occurrence counts wallets that join an overlapping earlier pack after this pack formed", () => {
+    const db = testDb();
+    const events = [
+      ev("o1", "P", 0, "20", MINT2), ev("o2", "Q", 1, "20", MINT2), ev("o3", "R", 2, "20", MINT2), // MINT2 pack triggers at 2 s
+      ev("o4", "A", 3, "20"), ev("o5", "B", 4, "20"), ev("o6", "D", 5, "20"), // MINT pack triggers at 5 s
+      ev("o7", "A", 8, "20", MINT2), ev("o8", "B", 9, "20", MINT2), // A and B then join the earlier MINT2 pack
+      ev("o9", "E", 12, "20"), // MINT pack expands and recomputes its patterns
+    ];
+    run(db, dataset(events), "replay:overlap");
+    const row = db.prepare("SELECT patterns_json FROM packs WHERE namespace = 'replay:overlap' AND mint = ?").get(MINT) as { patterns_json: string };
+    expect(JSON.parse(row.patterns_json).cooccurrencePairCount).toBe(1); // A-B
+  });
+
   it("T40: co-occurrence in replay never sees future packs", () => {
     const db = testDb();
     const events = [
@@ -161,5 +191,23 @@ describe("dataset price policy", () => {
     const b = runDataset({ db, outbox: new OutboxBus(), config: five, dataset: ds, datasetHash: manifest.sha256, namespace: "replay:p5", namespaceMode: "replay", replayMode: "recorded-arrival", label: "p" });
     expect(b.digest).toBe(a.digest);
     expect(b.packIds).toHaveLength(5); // the outage still leaves Paper Kite unvalued
+  });
+});
+
+describe("custom detection rule", () => {
+  it("a dataset replays under the rule it names: 5 or more wallets, each buying $25 or more", () => {
+    const db = testDb();
+    const custom = (events: Dataset["events"]): Dataset => ({ ...dataset(events), configVersion: "pack-custom-5w-25usd-v1" });
+    const four = ["A", "B", "C", "D"].map((w, i) => ev(`f${i}`, w, i, "30"));
+    run(db, custom(four), "replay:c4");
+    run(db, custom(["A", "B", "C", "D", "E"].map((w, i) => ev(`g${i}`, w, i, i === 4 ? "24.99" : "30"))), "replay:c5low");
+    run(db, custom(["A", "B", "C", "D", "E"].map((w, i) => ev(`h${i}`, w, i, "25"))), "replay:c5");
+    run(db, dataset(four), "replay:b4"); // the same four buys under the baseline rule
+    const count = (ns: string) => (db.prepare("SELECT COUNT(*) AS n FROM packs WHERE namespace = ?").get(ns) as { n: number }).n;
+    expect(count("replay:c4")).toBe(0); // four wallets are not enough
+    expect(count("replay:c5low")).toBe(0); // one of five bought less than $25
+    expect(db.prepare("SELECT initial_wallet_count, config_version FROM packs WHERE namespace = 'replay:c5'").get()).toEqual({ initial_wallet_count: 5, config_version: "pack-custom-5w-25usd-v1" });
+    expect(count("replay:b4")).toBe(1);
+    expect(() => run(db, { ...dataset(four), configVersion: "pack-unknown-v9" }, "replay:bad")).toThrow(/not a known detection rule/);
   });
 });

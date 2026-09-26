@@ -15,7 +15,8 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import WebSocket from "ws";
 import { SystemClock } from "../clock.js";
-import { ConfigError, loadConfig, loadDotEnv, PUMP_PROGRAM_ID, redactUrl, WSOL_MINT } from "../config.js";
+import { ConfigError, liveNamespace, loadConfig, loadDotEnv, PUMP_PROGRAM_ID, PYTH_SOL_USD_ACCOUNT, redactUrl, WSOL_MINT } from "../config.js";
+import { readSolUsdAccount } from "../prices/pyth.js";
 import { migrate, openDatabase } from "../db/connection.js";
 import { decodeLogs } from "../collector/decoder.js";
 import { NansenClient, type CallResult, type SessionGuard } from "../adapters/nansen/client.js";
@@ -110,7 +111,7 @@ async function main(): Promise<void> {
 
   const db = openDatabase(config.databasePath);
   migrate(db, join(config.rootDir, "migrations"), clock.now());
-  const ns = `live:${config.nansen.campaignId}`;
+  const ns = liveNamespace(config);
   ensureNamespace(db, ns, "live", `Live campaign ${config.nansen.campaignId}`, null, clock.now());
   const ledger = new BudgetLedger(db, config.nansen.campaignId, clock, () => config.price.reservePolls * config.price.quotes.length);
   ledger.ensureCampaign(config.nansen.budgetCredits!, config.nansen.sessionEndAtMs);
@@ -142,15 +143,36 @@ async function main(): Promise<void> {
   };
 
   const policy = config.price.policy;
-  say(`2/3  Nansen quote price (OHLCV ${policy.timeframe}, closed candles, policy ${policy.version}${policy.isBaseline ? "" : ", documented fallback"})…`);
-  const to = Math.floor(clock.now() / policy.candleMs) * policy.candleMs;
-  const price = await call("quote-price", OHLCV, { chain: "solana", token_address: WSOL_MINT, timeframe: policy.timeframe, date: { from: isoNoMillis(to - policy.rangeMs), to: isoNoMillis(to) } }, "PRICE", (d) => {
-    const last = d.candles[d.candles.length - 1];
-    return last ? `${d.candles.length} closed candles; latest ${new Date(last.intervalStartMs).toISOString()} close $${last.close} (age at fetch ${Math.round((Date.now() - last.intervalStartMs) / 1000)} s)` : "no candles";
-  });
-  if (price.ok && price.normalized.data.candles.length > 0) {
-    const newest = price.normalized.data.candles[price.normalized.data.candles.length - 1]!.intervalStartMs;
-    say(`     Price freshness: the newest closed candle starts ${Math.round((Date.now() - newest) / 1000)} s before now (valid for events while that is ≤ ${policy.maxCandleAgeMs / 1000} s).`);
+  if (policy.provider === "pyth") {
+    say(`2/3  Pyth quote price (on-chain SOL/USD account ${PYTH_SOL_USD_ACCOUNT}, policy ${policy.version}, no Nansen credits)…`);
+    try {
+      const res = await fetch(config.rpc.httpUrl!, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getAccountInfo", params: [PYTH_SOL_USD_ACCOUNT, { encoding: "base64", commitment: "confirmed" }] }),
+        signal: AbortSignal.timeout(10_000),
+      });
+      const p = readSolUsdAccount(((await res.json()) as { result?: { value?: unknown } }).result?.value ?? null);
+      const age = Math.round((Date.now() - p.publishTimeMs) / 1000);
+      const detail = `SOL/USD $${p.price} ± ${p.conf}, published ${new Date(p.publishTimeMs).toISOString()} (${age} s ago; valid for events while that is ≤ ${policy.maxCandleAgeMs / 1000} s)`;
+      results.push({ step: "pyth/sol-usd", ok: age <= policy.maxCandleAgeMs / 1000, detail });
+      say(`     ${age <= policy.maxCandleAgeMs / 1000 ? "PASS" : "FAIL"} pyth/sol-usd: ${detail}`);
+    } catch (err) {
+      results.push({ step: "pyth/sol-usd", ok: false, detail: String(err) });
+      say(`     FAIL pyth/sol-usd: ${String(err)}`);
+    }
+  } else {
+    const timeframe = policy.timeframe === "5m" ? "5m" : "1m";
+    say(`2/3  Nansen quote price (OHLCV ${timeframe}, closed candles, policy ${policy.version}${policy.isBaseline ? "" : ", documented fallback"})…`);
+    const to = Math.floor(clock.now() / policy.candleMs) * policy.candleMs;
+    const price = await call("quote-price", OHLCV, { chain: "solana", token_address: WSOL_MINT, timeframe, date: { from: isoNoMillis(to - policy.rangeMs), to: isoNoMillis(to) } }, "PRICE", (d) => {
+      const last = d.candles[d.candles.length - 1];
+      return last ? `${d.candles.length} closed candles; latest ${new Date(last.intervalStartMs).toISOString()} close $${last.close} (age at fetch ${Math.round((Date.now() - last.intervalStartMs) / 1000)} s)` : "no candles";
+    });
+    if (price.ok && price.normalized.data.candles.length > 0) {
+      const newest = price.normalized.data.candles[price.normalized.data.candles.length - 1]!.intervalStartMs;
+      say(`     Price freshness: the newest closed candle starts ${Math.round((Date.now() - newest) / 1000)} s before now (valid for events while that is ≤ ${policy.maxCandleAgeMs / 1000} s).`);
+    }
   }
 
   say("3/3  Nansen Smart Money, token, and wallet endpoints…");

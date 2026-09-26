@@ -270,6 +270,8 @@ select {
   color: var(--ink);
   margin: 16px 0 0;
   text-wrap: balance;
+  /* Token names are creator text and can be one long word; wrap instead of widening the page. */
+  overflow-wrap: anywhere;
 }
 .display em {
   font-style: normal;
@@ -810,6 +812,8 @@ kbd {
 /* ------------------------------------------------------------------ */
 
 .table-wrap {
+  /* Containing block for absolutely positioned descendants (screen-reader text), so they scroll with the table instead of widening the page. */
+  position: relative;
   width: 100%;
   overflow-x: auto;
   border: 1px solid var(--border);

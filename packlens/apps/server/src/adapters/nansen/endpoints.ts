@@ -355,7 +355,8 @@ export const PNL_SUMMARY: EndpointDef<PnlReq, PnlData> = {
   expectedCredits: 1,
   subjectType: "wallet",
   subjectId: (r) => r.wallet_address,
-  ttlMs: 60 * 60_000,
+  // 30-day PnL moves slowly; one profile per wallet per UTC day serves every pack it joins.
+  ttlMs: 24 * 60 * 60_000,
   schema: PnlSchema,
   normalize(res, req) {
     const r = parse(PnlSchema, res);
@@ -414,7 +415,7 @@ export const WALLET_DEX_TRADES: EndpointDef<WalletDexReq, DexHistoryData> = {
   expectedCredits: 1,
   subjectType: "wallet",
   subjectId: (r) => r.address,
-  ttlMs: 5 * 60_000,
+  ttlMs: 60 * 60_000,
   schema: WalletDexSchema,
   normalize(res, req) {
     const r = parse(WalletDexSchema, res);
@@ -472,7 +473,8 @@ export const RELATED_WALLETS: EndpointDef<RelatedReq, RawRelated> = {
   expectedCredits: 1,
   subjectType: "wallet",
   subjectId: (r) => r.wallet_address,
-  ttlMs: 15 * 60_000,
+  // Funding and deployer relationships rarely change; reuse for a week.
+  ttlMs: 7 * 24 * 60 * 60_000,
   schema: RelatedSchema,
   normalize(res, req) {
     const r = parse(RelatedSchema, res);
@@ -577,7 +579,8 @@ export const CURRENT_BALANCE: EndpointDef<BalanceReq, RawBalance> = {
 
 export type SmDexReq = {
   chains: ["solana"];
-  filters?: { token_bought_address: string };
+  /** A token lookup filters by bought token; the global feed may filter by token age (days since launch). */
+  filters?: { token_bought_address: string } | { token_bought_age_days: { min: number; max: number } };
   pagination: { page: number; per_page: number };
   order_by: [{ field: "block_timestamp"; direction: "DESC" }];
 };
@@ -606,7 +609,7 @@ export const SMART_MONEY_DEX: EndpointDef<SmDexReq, SmDexData> = {
   path: "/api/v1/smart-money/dex-trades",
   expectedCredits: 5,
   subjectType: "token",
-  subjectId: (r) => r.filters?.token_bought_address ?? "global",
+  subjectId: (r) => (r.filters && "token_bought_address" in r.filters ? r.filters.token_bought_address : "global"),
   // At most one targeted lookup per mint per 120 seconds; packs sharing a mint share it.
   ttlMs: 120_000,
   schema: SmDexSchema,
@@ -615,7 +618,7 @@ export const SMART_MONEY_DEX: EndpointDef<SmDexReq, SmDexData> = {
     const p = page(r.pagination);
     const trades: SmTrade[] = r.data.map((t) => {
       if (t.chain !== "solana") throw new SchemaMismatchError("Smart Money trade chain does not match Solana scope");
-      if (req.filters && t.token_bought_address !== req.filters.token_bought_address) {
+      if (req.filters && "token_bought_address" in req.filters && t.token_bought_address !== req.filters.token_bought_address) {
         throw new SchemaMismatchError("Smart Money trade does not match the requested bought token");
       }
       return {

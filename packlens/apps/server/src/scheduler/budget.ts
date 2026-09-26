@@ -11,6 +11,10 @@ export type BudgetTotals = {
   /** budget - settled - unresolved - reserved (accounting remaining). */
   remaining: number;
   priceReserve: number;
+  /** Credits allowed per UTC day, or null when only the campaign budget applies. */
+  dailyCap: number | null;
+  /** Credits settled, reserved, or unresolved since 00:00 UTC today. */
+  usedToday: number;
 };
 
 export type ReserveRequest = {
@@ -25,7 +29,9 @@ export type ReserveRequest = {
   retryOfAttemptId: string | null;
 };
 
-export type ReserveResult = { ok: true } | { ok: false; reason: "insufficient_credits" | "no_campaign"; available: number };
+export type ReserveResult = { ok: true } | { ok: false; reason: "insufficient_credits" | "daily_cap" | "no_campaign"; available: number };
+
+const DAY_MS = 24 * 60 * 60_000;
 
 /**
  * Campaign credit ledger (blueprint §12.2, §12.3). Before each send:
@@ -39,6 +45,7 @@ export class BudgetLedger {
     readonly campaignId: string,
     private readonly clock: Clock,
     private readonly priceReserve: () => number,
+    private readonly dailyCap: number | null = null,
   ) {}
 
   ensureCampaign(configuredBudget: number, endsAtMs: number | null): void {
@@ -72,7 +79,21 @@ export class BudgetLedger {
       unresolved: r.unresolved,
       remaining: budget - r.settled - r.reserved - r.unresolved,
       priceReserve: this.priceReserve(),
+      dailyCap: this.dailyCap,
+      usedToday: this.usedToday(),
     };
+  }
+
+  /** Spending since 00:00 UTC: settled at actual cost, open and unresolved reservations at their reserved amount. */
+  usedToday(): number {
+    const dayStart = Math.floor(this.clock.now() / DAY_MS) * DAY_MS;
+    const r = this.db
+      .prepare(
+        `SELECT COALESCE(SUM(CASE WHEN status = 'settled' THEN settled_amount WHEN status IN ('reserved', 'unresolved') THEN amount ELSE 0 END), 0) AS used
+         FROM budget_reservations WHERE campaign_id = ? AND created_at_ms >= ?`,
+      )
+      .get(this.campaignId, dayStart) as { used: number };
+    return r.used;
   }
 
   /** Atomically reserve credits and open the ledger row for this attempt. */
@@ -83,6 +104,7 @@ export class BudgetLedger {
       const t = this.totals();
       const available = req.lane === "PRICE" ? t.remaining : t.remaining - t.priceReserve;
       if (req.amount > available) return { ok: false, reason: "insufficient_credits", available: Math.max(0, available) };
+      if (t.dailyCap !== null && t.usedToday + req.amount > t.dailyCap) return { ok: false, reason: "daily_cap", available: Math.max(0, t.dailyCap - t.usedToday) };
       const now = this.clock.now();
       this.db
         .prepare(

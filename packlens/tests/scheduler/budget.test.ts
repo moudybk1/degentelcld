@@ -83,3 +83,34 @@ describe("V11: credit ledger", () => {
     expect(again.totals().settled).toBe(1);
   });
 });
+
+describe("daily credit cap (24/7 mode)", () => {
+  const DAY = 24 * 60 * 60_000;
+
+  it("stops at the cap for the UTC day, counts open and unresolved reservations, and resets at midnight", () => {
+    const db = testDb();
+    const clock = new VirtualClock(Math.floor(T0 / DAY) * DAY + 23 * 60 * 60_000); // 23:00 UTC
+    const l = new BudgetLedger(db, "camp", clock, () => 0, 30);
+    l.ensureCampaign(1000, null);
+    expect(l.reserve(req("a", "BASE_ENRICHMENT", 10)).ok).toBe(true);
+    l.settle("a", 8); // actual cost counts, not the estimate
+    expect(l.reserve(req("b", "SMART_MONEY", 10)).ok).toBe(true); // still reserved
+    expect(l.reserve(req("c", "BASE_ENRICHMENT", 5)).ok).toBe(true);
+    l.markUnresolved("c");
+    expect(l.totals()).toMatchObject({ dailyCap: 30, usedToday: 23 });
+    expect(l.reserve(req("d", "BASE_ENRICHMENT", 8))).toEqual({ ok: false, reason: "daily_cap", available: 7 });
+    l.release("b"); // never sent: frees today's allowance
+    expect(l.reserve(req("e", "BASE_ENRICHMENT", 8)).ok).toBe(true);
+    clock.advance(60 * 60_000); // 00:00 UTC next day
+    expect(l.totals().usedToday).toBe(0);
+    expect(l.reserve(req("f", "BASE_ENRICHMENT", 30)).ok).toBe(true);
+    // The campaign budget still applies across days.
+    expect(l.totals().remaining).toBe(1000 - 8 - 5 - 8 - 30);
+  });
+
+  it("without a cap only the campaign budget applies", () => {
+    const { l } = ledger(10, 0);
+    expect(l.totals()).toMatchObject({ dailyCap: null });
+    expect(l.reserve(req("a", "BASE_ENRICHMENT", 10)).ok).toBe(true);
+  });
+});
