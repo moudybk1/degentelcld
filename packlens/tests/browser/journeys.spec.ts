@@ -336,3 +336,19 @@ test("repeat wallets: reachable from the top bar, explains its sources, and fits
   await page.setViewportSize({ width: 360, height: 780 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
 });
+
+test("radar overview stays visible after it refreshes (scroll reveal never hides a block again)", async ({ page }) => {
+  await page.goto("/");
+  const overview = page.locator("section.overview");
+  await overview.scrollIntoViewIfNeeded();
+  await expect(overview).toHaveAttribute("data-reveal", "in");
+  // A filter change reloads the overview, which toggles its "refreshing" class.
+  await page.getByLabel("Only packs with confirmed Smart Money members").check();
+  await expect(page.locator(".kpi.hero .kpi-value")).toHaveText("1");
+  await page.getByRole("button", { name: "Reset" }).click();
+  await expect(page.locator(".kpi.hero .kpi-value")).toHaveText("5");
+  await expect(overview).toHaveCSS("opacity", "1");
+  // Anything above the reader counts as seen, even after a jump to the bottom.
+  await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+  await expect(page.locator("[data-reveal='pending']")).toHaveCount(0);
+});

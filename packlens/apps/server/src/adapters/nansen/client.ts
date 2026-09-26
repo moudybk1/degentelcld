@@ -80,6 +80,18 @@ export type CallResult<T> = CallSuccess<T> | CallFailure;
 
 type Headers = { cost: number | null; used: number | null; remaining: number | null; requestId: string | null; retryAfterS: number | null };
 
+/**
+ * Extra time to read a body once the provider has answered: by then the call is
+ * charged, so waiting longer is cheaper than paying again for a retry.
+ */
+const BODY_TIMEOUT_MS = 30_000;
+
+function timeoutError(message: string): Error {
+  const e = new Error(message);
+  e.name = "TimeoutError";
+  return e;
+}
+
 function nonNegInt(v: string | null): number | null {
   if (v === null) return null;
   const t = v.trim();
@@ -320,23 +332,36 @@ export class NansenClient {
       if (headers.remaining !== null) this.lastReportedRemaining = headers.remaining;
     };
 
+    const ctrl = new AbortController();
+    let deadline = setTimeout(() => ctrl.abort(timeoutError("Request timed out")), this.deps.timeoutMs);
     try {
       markSent();
       const res = await this.fetchImpl(`${this.deps.baseUrl}${def.path}`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Accept: "application/json", apikey: this.deps.apiKey },
         body: JSON.stringify(req),
-        signal: AbortSignal.timeout(this.deps.timeoutMs),
+        signal: ctrl.signal,
       });
       status = res.status;
       headers = readHeaders(res.headers);
+      clearTimeout(deadline);
+      deadline = setTimeout(() => ctrl.abort(timeoutError("Response body timed out")), BODY_TIMEOUT_MS);
       bodyText = await res.text();
     } catch (err) {
       const isTimeout = err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError");
+      if (status !== null) {
+        // The provider answered (status and credit headers arrived) and has charged for the call;
+        // only the body was lost. Record the reported cost and do not retry, which would pay again.
+        settle();
+        finish({ http_outcome: isTimeout ? "timeout" : "network_error", normalization_status: "not_applicable", error_code: "body_not_received" });
+        return { ok: false, code: isTimeout ? "timeout" : "network_error", message: "The provider answered, but the response body did not arrive", snapshotId: null, attemptIds: [], retryable: false };
+      }
       // The request may have reached the provider: keep the attempt and reservation unresolved.
       this.deps.ledger.markUnresolved(attemptId, def.expectedCredits);
       finish({ http_outcome: isTimeout ? "timeout" : "network_error", normalization_status: "not_applicable", error_code: isTimeout ? "timeout" : "network_error" });
       return { ok: false, code: isTimeout ? "timeout" : "network_error", message: isTimeout ? "Request timed out" : "Network error", snapshotId: null, attemptIds: [], retryable: true };
+    } finally {
+      clearTimeout(deadline);
     }
 
     if (status < 200 || status >= 300) {

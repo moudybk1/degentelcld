@@ -692,6 +692,8 @@ export type SourceStatus = {
     undecodable: number;
     truncatedLogs: number;
   };
+  /** True while the stored-buy totals of an archived live namespace are still being counted in the background (counters read 0 meanwhile). */
+  countersPending?: boolean;
   openGaps: number;
   totalGaps: number;
   latestPackTriggerMs: number | null;

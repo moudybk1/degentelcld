@@ -11,6 +11,11 @@ function reducedMotion(): boolean {
  * Scroll reveal for page blocks. Elements are only hidden once this runs, so
  * without JavaScript or IntersectionObserver everything is simply visible.
  * New blocks (loaded data, route changes) are picked up before they paint.
+ *
+ * State lives in the `data-reveal` attribute ("pending" → "in"), never in
+ * `className`: React rewrites className whenever a component's classes change
+ * (for example "overview" → "overview refreshing"), which would silently drop
+ * a class added here and hide the block again.
  */
 export function useScrollReveal(key: string): void {
   useEffect(() => {
@@ -25,30 +30,33 @@ export function useScrollReveal(key: string): void {
           if (!e.isIntersecting) continue;
           const el = e.target as HTMLElement;
           el.style.setProperty("--reveal-i", String(n++));
-          el.classList.add("is-in");
+          el.setAttribute("data-reveal", "in");
           io.unobserve(el);
         }
       },
-      { rootMargin: "0px 0px -6% 0px", threshold: 0.01 },
+      // The huge top margin counts anything already scrolled past (a jump to a
+      // section link, a fast scroll) as seen, so nothing stays hidden above the reader.
+      { rootMargin: "100000px 0px -6% 0px", threshold: 0 },
     );
-    const watched = new WeakSet<Element>();
     const scan = () => {
       main.querySelectorAll<HTMLElement>(REVEAL).forEach((el) => {
-        if (watched.has(el) || el.classList.contains("is-in")) return;
-        watched.add(el);
-        el.setAttribute("data-reveal", "");
+        if (el.hasAttribute("data-reveal")) return;
+        el.setAttribute("data-reveal", "pending");
         io.observe(el);
       });
     };
     scan();
     const mo = new MutationObserver(scan);
     mo.observe(main, { childList: true, subtree: true });
-    const showAll = () => main.querySelectorAll("[data-reveal]").forEach((el) => el.classList.add("is-in"));
+    const showAll = () => main.querySelectorAll("[data-reveal]").forEach((el) => el.setAttribute("data-reveal", "in"));
     window.addEventListener("beforeprint", showAll);
     return () => {
       io.disconnect();
       mo.disconnect();
       window.removeEventListener("beforeprint", showAll);
+      // Blocks this run was still waiting on are handed back unhidden, so a re-run
+      // (route change, React's development double effect) observes them again.
+      main.querySelectorAll('[data-reveal="pending"]').forEach((el) => el.removeAttribute("data-reveal"));
     };
   }, [key]);
 }

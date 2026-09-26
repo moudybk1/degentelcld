@@ -389,9 +389,15 @@ export function RadarPage({ status }: { status: SourceStatus | null }) {
           <div className="fact">
             <dt>Buys evaluated</dt>
             <dd>
-              <Decode text={int(status?.counters.buys ?? null)} />
+              <Decode text={status?.countersPending ? "Counting…" : int(status?.counters.buys ?? null)} />
             </dd>
-            <dd className="fact-note">{status ? `${int(status.counters.eligible)} eligible · ${int(status.counters.unvalued)} unvalued · ${int(status.counters.late)} late` : "n/a"}</dd>
+            <dd className="fact-note">
+              {status?.countersPending
+                ? "Counting the stored buys in the background"
+                : status
+                  ? `${int(status.counters.eligible)} eligible · ${int(status.counters.unvalued)} unvalued · ${int(status.counters.late)} late`
+                  : "n/a"}
+            </dd>
           </div>
         </dl>
       </header>
@@ -551,7 +557,7 @@ export function RadarPage({ status }: { status: SourceStatus | null }) {
         <section className="kpis legacy" aria-label="Source summary">
           <Stat label="Packs detected" value={int(status?.packCount ?? null)} note="Persisted in this namespace" />
           <Stat label="Latest trigger" value={status?.latestPackTriggerMs ? relative(status.latestPackTriggerMs, now) : "n/a"} note={status?.latestPackTriggerMs ? timeUtc(status.latestPackTriggerMs) : "No packs detected yet"} />
-          <Stat label="Buys evaluated" value={int(status?.counters.buys ?? null)} note={status ? `${int(status.counters.eligible)} eligible` : "n/a"} />
+          <Stat label="Buys evaluated" value={status?.countersPending ? "Counting…" : int(status?.counters.buys ?? null)} note={status && !status.countersPending ? `${int(status.counters.eligible)} eligible` : "n/a"} />
           <p className="small muted kpi-foot">Range totals and charts need the server's overview endpoint. Restart the server on this version to see them.</p>
         </section>
       ) : (

@@ -190,7 +190,7 @@ export function PackDetailPage() {
 
       {/* 1. Identity, source, mode, time, persistence */}
       <header className="id-head">
-        <div className="row" style={{ gap: 22, alignItems: "flex-end", flexWrap: "nowrap", minWidth: 0 }}>
+        <div className="row" style={{ gap: "14px 22px", alignItems: "flex-end", minWidth: 0 }}>
           <TokenAvatar mint={d.core.tokenAddress} symbol={d.token.symbol} name={d.token.name} image={d.token.imageUrl} large />
           <div className="row" style={{ gap: 8, minWidth: 0 }}>
             <ModeBadge mode={meta?.mode} />

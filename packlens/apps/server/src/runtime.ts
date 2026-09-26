@@ -3,6 +3,8 @@ import { SystemClock, type Clock } from "./clock.js";
 import { BASELINE_DETECTOR_CONFIG, detectorConfigForVersion, liveNamespace, PYTH_SOL_USD_ACCOUNT, type AppConfig } from "./config.js";
 import { migrate, openDatabase, type Db } from "./db/connection.js";
 import { join } from "node:path";
+import { createRequire } from "node:module";
+import { Worker } from "node:worker_threads";
 import { OutboxBus } from "./ingest/outbox.js";
 import { DetectorEngine } from "./ingest/engine.js";
 import { IngestPipeline } from "./ingest/pipeline.js";
@@ -29,8 +31,38 @@ import { newId } from "./lib/ids.js";
 import { log } from "./lib/log.js";
 import { RetentionJob } from "./operations/retention.js";
 import { TokenImageResolver } from "./metadata/tokenImages.js";
+import { CatchUpGuard } from "./ingest/catchUp.js";
 
 export type DecoderCounters = { decodedEvents: number; buys: number; sells: number; undecodable: number; truncatedLogs: number; creates: number };
+
+type NamespaceCounts = { decoded: number; buys: number; sells: number; eligible: number; late: number; unvalued: number };
+type NamespaceCountsRow = { decoded: number; buys: number | null; sells: number | null; eligible: number | null; late: number | null; unvalued: number | null };
+
+const NAMESPACE_COUNTS_SQL = `SELECT COUNT(*) AS decoded, SUM(side = 'buy') AS buys, SUM(side = 'sell') AS sells, SUM(eligibility = 'eligible') AS eligible,
+  SUM(admission = 'late') AS late, SUM(valuation_status <> 'valued') AS unvalued FROM trade_events WHERE namespace = ?`;
+
+/** Archived namespaces change only through retention, so their totals are recounted at most every 10 minutes. */
+const ARCHIVE_COUNTS_TTL_MS = 10 * 60_000;
+
+/** Worker thread body (CommonJS, run with eval): one read-only connection, one count per message. */
+const COUNTS_WORKER_SOURCE = `
+const { parentPort, workerData } = require("node:worker_threads");
+const Database = require(workerData.driver);
+const db = new Database(workerData.path, { readonly: true, fileMustExist: true });
+db.pragma("busy_timeout = 5000");
+const stmt = db.prepare(workerData.sql);
+parentPort.on("message", (m) => {
+  try {
+    parentPort.postMessage({ namespace: m.namespace, row: stmt.get(m.namespace) });
+  } catch (err) {
+    parentPort.postMessage({ namespace: m.namespace, error: String((err && err.message) || err) });
+  }
+});
+`;
+
+function namespaceCounts(r: NamespaceCountsRow): NamespaceCounts {
+  return { decoded: r.decoded, buys: r.buys ?? 0, sells: r.sells ?? 0, eligible: r.eligible ?? 0, late: r.late ?? 0, unvalued: r.unvalued ?? 0 };
+}
 
 export type LiveComponents = {
   pipeline: IngestPipeline;
@@ -61,6 +93,8 @@ export class Runtime {
   };
   private retention: RetentionJob | null = null;
   private tokenImages: TokenImageResolver | null = null;
+  /** Live watermark guard (exposed for diagnostics). */
+  catchUp: CatchUpGuard | null = null;
   readonly queue: JobQueue;
 
   private constructor(
@@ -197,6 +231,8 @@ export class Runtime {
         ? `pyth:onchain:${PYTH_SOL_USD_ACCOUNT}:${cfg.price.policy.version}`
         : `nansen:tgm/token-ohlcv:${cfg.price.policy.timeframe}:closed_only:${cfg.price.policy.version}`;
     const decoder: DecoderCounters = { decodedEvents: 0, buys: 0, sells: 0, undecodable: 0, truncatedLogs: 0, creates: 0 };
+    // Newest on-chain event time read from the stream; tells the catch-up guard when a backlog is drained.
+    let newestStreamEventMs: number | null = null;
 
     const upsertToken = db.prepare(
       `INSERT INTO tokens (namespace, chain, mint, name, symbol, uri, creator, create_signature, created_event_time_ms, first_seen_at_ms, token_total_supply_raw)
@@ -221,6 +257,7 @@ export class Runtime {
       for (const c of decoded.completes) completeToken.run(ns, c.mint, tx.receivedAtMs, c.timestampSec * 1000, tx.signature);
       for (const t of decoded.trades) {
         decoder.decodedEvents++;
+        if (newestStreamEventMs === null || t.timestampSec * 1000 > newestStreamEventMs) newestStreamEventMs = t.timestampSec * 1000;
         if (t.isBuy) decoder.buys++;
         else decoder.sells++;
         try {
@@ -253,13 +290,20 @@ export class Runtime {
     scheduler.start();
     collector?.start();
     this.tokenImages?.start();
+    const TICK_MS = 250;
+    const catchUp = new CatchUpGuard(
+      clock,
+      { tickMs: TICK_MS, stallMs: 400, currentMs: cfg.detector.reorderToleranceMs, maxHoldMs: 20_000 },
+      (info) => log("info", "ingest", "Watermark held while the stream caught up after an event-loop stall", info),
+    );
+    this.catchUp = catchUp;
     this.tickTimer = setInterval(() => {
       try {
-        pipeline.tick();
+        if (catchUp.mayAdvance(newestStreamEventMs)) pipeline.tick();
       } catch (err) {
         log("error", "ingest", "Watermark tick failed; no update was published", { error: String(err) });
       }
-    }, 250);
+    }, TICK_MS);
     this.tickTimer.unref?.();
     const s = session.current();
     log("info", "runtime", "Live runtime started", {
@@ -273,6 +317,8 @@ export class Runtime {
 
   async stop(): Promise<void> {
     if (this.tickTimer) clearInterval(this.tickTimer);
+    await this.countsWorker?.terminate();
+    this.countsWorker = null;
     this.retention?.stop();
     this.tokenImages?.stop();
     if (this.live) {
@@ -315,6 +361,71 @@ export class Runtime {
 
   private readonly statusMemo = new Map<string, { at: number; value: SourceStatus }>();
 
+  /**
+   * Stored-buy totals of archived live namespaces (an earlier rule or campaign). Counting them
+   * scans every stored trade of the namespace: about 30 s for a million rows, which on the main
+   * thread would freeze the collector and the API. They are counted on a worker thread with its
+   * own read-only connection, kept for ARCHIVE_COUNTS_TTL_MS, and persisted across restarts.
+   */
+  private readonly archiveCounts = new Map<string, { at: number; counts: NamespaceCounts }>();
+  private readonly archiveCounting = new Set<string>();
+  private countsWorker: Worker | null = null;
+
+  private archivedCounts(namespace: string): NamespaceCounts | null {
+    const now = Date.now();
+    let hit = this.archiveCounts.get(namespace);
+    if (!hit) {
+      const row = this.db.prepare("SELECT value FROM meta WHERE key = ?").get(`status_counts:${namespace}`) as { value: string } | undefined;
+      if (row) {
+        try {
+          hit = JSON.parse(row.value) as { at: number; counts: NamespaceCounts };
+          this.archiveCounts.set(namespace, hit);
+        } catch {
+          /* recount below */
+        }
+      }
+    }
+    if (!hit || now - hit.at > ARCHIVE_COUNTS_TTL_MS) this.countInBackground(namespace);
+    // An in-memory database is counted synchronously, so a fresh entry may exist now.
+    return (this.archiveCounts.get(namespace) ?? hit)?.counts ?? null;
+  }
+
+  private storeArchivedCounts(namespace: string, counts: NamespaceCounts): void {
+    const entry = { at: Date.now(), counts };
+    this.archiveCounts.set(namespace, entry);
+    this.db.prepare("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(`status_counts:${namespace}`, JSON.stringify(entry));
+    this.statusMemo.delete(namespace);
+  }
+
+  private countInBackground(namespace: string): void {
+    if (this.archiveCounting.has(namespace)) return;
+    if (this.config.databasePath === ":memory:") {
+      // Tests and in-memory databases are small, and a worker cannot open them.
+      this.storeArchivedCounts(namespace, namespaceCounts(this.db.prepare(NAMESPACE_COUNTS_SQL).get(namespace) as NamespaceCountsRow));
+      return;
+    }
+    this.archiveCounting.add(namespace);
+    if (!this.countsWorker) {
+      const worker = new Worker(COUNTS_WORKER_SOURCE, {
+        eval: true,
+        workerData: { driver: createRequire(import.meta.url).resolve("better-sqlite3"), path: this.config.databasePath, sql: NAMESPACE_COUNTS_SQL },
+      });
+      worker.unref();
+      worker.on("message", (m: { namespace: string; row?: NamespaceCountsRow; error?: string }) => {
+        this.archiveCounting.delete(m.namespace);
+        if (m.row) this.storeArchivedCounts(m.namespace, namespaceCounts(m.row));
+        else log("warn", "runtime", "Counting an archived namespace failed", { namespace: m.namespace, error: m.error });
+      });
+      worker.on("error", (err) => {
+        log("error", "runtime", "Namespace counting worker failed", { error: err.message });
+        this.archiveCounting.clear();
+        this.countsWorker = null;
+      });
+      this.countsWorker = worker;
+    }
+    this.countsWorker.postMessage({ namespace });
+  }
+
   /** status() shared by every live-stream connection for up to `maxAgeMs` of wall-clock time. */
   sharedStatus(namespace: string, maxAgeMs = 4000): SourceStatus {
     const now = Date.now();
@@ -333,14 +444,13 @@ export class Runtime {
     const gaps = this.db.prepare("SELECT COUNT(*) AS total, SUM(CASE WHEN recovery_state = 'open' THEN 1 ELSE 0 END) AS open FROM collector_gaps WHERE namespace = ?").get(namespace) as { total: number; open: number | null };
     const isLive = this.live !== null && namespace === this.primaryNamespace;
     const c = isLive ? this.live!.pipeline.counters : null;
-    const dbCounts = !isLive
-      ? (this.db
-          .prepare(
-            `SELECT COUNT(*) AS decoded, SUM(side = 'buy') AS buys, SUM(side = 'sell') AS sells, SUM(eligibility = 'eligible') AS eligible,
-               SUM(admission = 'late') AS late, SUM(valuation_status <> 'valued') AS unvalued FROM trade_events WHERE namespace = ?`,
-          )
-          .get(namespace) as { decoded: number; buys: number | null; sells: number | null; eligible: number | null; late: number | null; unvalued: number | null })
-      : null;
+    // Archived live namespaces are large and counted in the background; fixture and replay data are small.
+    const archived = !isLive && mode === "live";
+    const dbCounts: NamespaceCounts | null = isLive
+      ? null
+      : archived
+        ? this.archivedCounts(namespace)
+        : namespaceCounts(this.db.prepare(NAMESPACE_COUNTS_SQL).get(namespace) as NamespaceCountsRow);
     const session = this.live?.session.current() ?? null;
     const q = this.config.price.quotes[0]!;
     const priceStatus = isLive ? this.live!.pricePoller.status(q) : null;
@@ -386,16 +496,17 @@ export class Runtime {
         : {
             notifications: 0,
             failedTransactions: 0,
-            decodedEvents: dbCounts!.decoded,
-            buys: dbCounts!.buys ?? 0,
-            sells: dbCounts!.sells ?? 0,
-            eligible: dbCounts!.eligible ?? 0,
-            late: dbCounts!.late ?? 0,
+            decodedEvents: dbCounts?.decoded ?? 0,
+            buys: dbCounts?.buys ?? 0,
+            sells: dbCounts?.sells ?? 0,
+            eligible: dbCounts?.eligible ?? 0,
+            late: dbCounts?.late ?? 0,
             duplicates: 0,
-            unvalued: dbCounts!.unvalued ?? 0,
+            unvalued: dbCounts?.unvalued ?? 0,
             undecodable: 0,
             truncatedLogs: 0,
           },
+      ...(!isLive && dbCounts === null ? { countersPending: true } : {}),
       openGaps: gaps.open ?? 0,
       totalGaps: gaps.total,
       latestPackTriggerMs: packs.latest,

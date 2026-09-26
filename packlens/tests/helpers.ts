@@ -140,7 +140,8 @@ export function members(db: Db, packId: string): { wallet: string; member_kind: 
 }
 
 /** Minimal fake Nansen provider for client tests; never touches the network. */
-export type FakeReply = { status: number; body: unknown; headers?: Record<string, string>; delayMs?: number; throws?: "timeout" | "network" };
+/** `body_timeout`: the status and headers arrive, then reading the body times out. */
+export type FakeReply = { status: number; body: unknown; headers?: Record<string, string>; delayMs?: number; throws?: "timeout" | "network" | "body_timeout" };
 
 export function fakeFetch(handler: (path: string, body: Record<string, unknown>, call: number) => FakeReply) {
   let calls = 0;
@@ -162,7 +163,14 @@ export function fakeFetch(handler: (path: string, body: Record<string, unknown>,
     return {
       status: r.status,
       headers: { get: (n: string) => headers.get(n.toLowerCase()) ?? null },
-      text: async () => (typeof r.body === "string" ? r.body : JSON.stringify(r.body)),
+      text: async () => {
+        if (r.throws === "body_timeout") {
+          const e = new Error("body timed out");
+          e.name = "TimeoutError";
+          throw e;
+        }
+        return typeof r.body === "string" ? r.body : JSON.stringify(r.body);
+      },
     };
   };
   return { fn, log, get calls() { return calls; } };

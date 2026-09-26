@@ -236,24 +236,22 @@ img {
 
 /* Route change: the whole page lifts in once. */
 .route {
-  animation: rise 520ms var(--ease) both;
+  animation: rise 520ms var(--ease) backwards;
 }
 
 /* Scroll reveal. Only applies once the reveal script is running, so content
    is never hidden when JavaScript or IntersectionObserver is unavailable. */
 .reveal {
-  animation: rise 560ms var(--ease) both;
+  animation: rise 560ms var(--ease) backwards;
   animation-delay: calc(min(var(--index, 0), 6) * 60ms);
 }
 html.motion [data-reveal] {
-  opacity: 0;
-  transform: translate3d(0, 18px, 0);
   transition: opacity 640ms var(--ease), transform 640ms var(--ease);
   transition-delay: calc(min(var(--reveal-i, 0), 5) * 70ms);
 }
-html.motion [data-reveal].is-in {
-  opacity: 1;
-  transform: none;
+html.motion [data-reveal="pending"] {
+  opacity: 0;
+  transform: translate3d(0, 18px, 0);
 }
 
 /* ------------------------------------------------------------------ */
@@ -441,7 +439,7 @@ html.motion [data-reveal].is-in {
   text-wrap: balance;
   /* Token names are creator text and can be one long word; wrap instead of widening the page. */
   overflow-wrap: anywhere;
-  animation: shutter 760ms var(--ease) 80ms both;
+  animation: shutter 760ms var(--ease) 80ms backwards;
 }
 .display em {
   font-style: normal;
@@ -1047,7 +1045,7 @@ kbd {
   text-transform: uppercase;
   color: var(--fg);
   margin: 26px 0 0 -0.04em;
-  animation: shutter 900ms var(--ease) 120ms both;
+  animation: shutter 900ms var(--ease) 120ms backwards;
 }
 .radar-title .h1 .h1-mark {
   color: var(--red);
@@ -1059,7 +1057,7 @@ kbd {
   font-size: 16px;
   line-height: 1.55;
   text-wrap: pretty;
-  animation: rise 700ms var(--ease) 380ms both;
+  animation: rise 700ms var(--ease) 380ms backwards;
 }
 
 .reticle {
@@ -1069,7 +1067,7 @@ kbd {
   align-self: center;
   margin-bottom: 36px;
   color: var(--line-3);
-  animation: fade 1200ms ease 200ms both;
+  animation: fade 1200ms ease 200ms backwards;
 }
 .reticle svg {
   display: block;
@@ -1132,7 +1130,7 @@ kbd {
   padding: 18px 22px 20px;
   background: var(--bg);
   min-width: 0;
-  animation: rise 600ms var(--ease) both;
+  animation: rise 600ms var(--ease) backwards;
 }
 .fact:nth-child(2) { animation-delay: 70ms; }
 .fact:nth-child(3) { animation-delay: 140ms; }
@@ -1315,7 +1313,7 @@ kbd {
   letter-spacing: 0.06em;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
-  animation: fade 300ms ease both;
+  animation: fade 300ms ease backwards;
 }
 .seg .seg-custom button {
   width: 26px;
@@ -1494,7 +1492,7 @@ kbd {
   fill: var(--red);
   transform-box: fill-box;
   transform-origin: 50% 100%;
-  animation: grow-y 700ms var(--ease) both;
+  animation: grow-y 700ms var(--ease) backwards;
   animation-delay: calc(min(var(--i, 0), 60) * 9ms);
   transition: opacity 140ms, fill 140ms;
 }
@@ -1525,7 +1523,7 @@ kbd {
   font-weight: 500;
   fill: var(--fg);
   font-variant-numeric: tabular-nums;
-  animation: fade 400ms ease 700ms both;
+  animation: fade 400ms ease 700ms backwards;
 }
 .activity .crosshair {
   stroke: var(--fg);
@@ -1620,7 +1618,7 @@ kbd {
   height: 100%;
   background: var(--red);
   transform-origin: left;
-  animation: wipe-x 900ms var(--ease-mech) both;
+  animation: wipe-x 900ms var(--ease-mech) backwards;
 }
 .bands li:nth-child(2) .band-bar { animation-delay: 70ms; }
 .bands li:nth-child(3) .band-bar { animation-delay: 140ms; }
@@ -1806,7 +1804,7 @@ kbd {
   justify-content: center;
   margin: 0 0 14px;
   pointer-events: none;
-  animation: rise 420ms var(--ease) both;
+  animation: rise 420ms var(--ease) backwards;
 }
 .new-banner .btn {
   pointer-events: auto;
@@ -1850,6 +1848,8 @@ table.table {
   white-space: nowrap;
   position: sticky;
   top: 0;
+  /* Above body rows (row entrance animations briefly give rows their own layer). */
+  z-index: 2;
 }
 .table td {
   padding: 12px 16px;
@@ -1879,7 +1879,7 @@ table.table {
   background: var(--red-wash);
 }
 .table tbody tr {
-  animation: rise 420ms var(--ease) both;
+  animation: rise 420ms var(--ease) backwards;
 }
 .table tbody tr:nth-child(2) { animation-delay: 25ms; }
 .table tbody tr:nth-child(3) { animation-delay: 50ms; }
@@ -2237,7 +2237,7 @@ tr.invalid td {
   width: 100%;
   height: 100%;
   object-fit: cover;
-  animation: fade 400ms ease both;
+  animation: fade 400ms ease backwards;
 }
 
 .addr {
@@ -2335,7 +2335,7 @@ tr.invalid td {
   border-left: 2px solid var(--line-3);
   font-size: 13px;
   color: var(--fg-2);
-  animation: rise 420ms var(--ease) both;
+  animation: rise 420ms var(--ease) backwards;
 }
 .note.yellow {
   border-color: var(--line-2);
@@ -2445,7 +2445,7 @@ tr.invalid td {
 }
 .timeline svg circle,
 .timeline svg rect.ev {
-  animation: fade 500ms ease both;
+  animation: fade 500ms ease backwards;
 }
 .legend {
   display: flex;
@@ -2478,7 +2478,7 @@ tr.invalid td {
   display: block;
   height: 100%;
   transform-origin: left;
-  animation: wipe-x 900ms var(--ease-mech) both;
+  animation: wipe-x 900ms var(--ease-mech) backwards;
 }
 .meter .settled { background: var(--red); }
 .meter .reserved { background: var(--fg-2); }
@@ -2723,10 +2723,10 @@ tr.invalid td {
 .chart-wrap .draw {
   stroke-dasharray: 1;
   stroke-dashoffset: 0;
-  animation: draw 1400ms var(--ease) 150ms both;
+  animation: draw 1400ms var(--ease) 150ms backwards;
 }
 .chart-wrap .mark-in {
-  animation: fade 400ms ease both;
+  animation: fade 400ms ease backwards;
   animation-delay: calc(700ms + min(var(--i, 0), 40) * 12ms);
 }
 .chart-tip {
@@ -2741,7 +2741,7 @@ tr.invalid td {
   max-width: 250px;
   color: var(--fg-2);
   z-index: 4;
-  animation: fade 140ms ease both;
+  animation: fade 140ms ease backwards;
 }
 .chart-tip::before {
   content: "";
@@ -2780,7 +2780,7 @@ details.table-toggle summary {
   transition: color 160ms;
 }
 details.table-toggle summary:hover { color: var(--fg); }
-details[open] > .table-wrap { animation: rise 360ms var(--ease) both; }
+details[open] > .table-wrap { animation: rise 360ms var(--ease) backwards; }
 
 .guide-toc {
   display: flex;
@@ -2878,7 +2878,7 @@ details[open] > .table-wrap { animation: rise 360ms var(--ease) both; }
 .how {
   border: 1px solid var(--line-2);
   background: var(--bg-raise);
-  animation: rise 560ms var(--ease) 200ms both;
+  animation: rise 560ms var(--ease) 200ms backwards;
 }
 .how-head {
   display: flex;
@@ -3012,7 +3012,7 @@ details[open] > .table-wrap { animation: rise 360ms var(--ease) both; }
   background: var(--bg-raise);
   color: inherit;
   transition: background-color 200ms;
-  animation: rise 560ms var(--ease) both;
+  animation: rise 560ms var(--ease) backwards;
 }
 .glance-card:nth-child(2) { animation-delay: 50ms; }
 .glance-card:nth-child(3) { animation-delay: 100ms; }
@@ -3148,7 +3148,7 @@ a.glance-card:hover .glance-more {
   border: 1px solid var(--line-3);
   background: var(--bg);
   box-shadow: 0 22px 50px rgba(0, 0, 0, 0.7);
-  animation: rise 220ms var(--ease) both;
+  animation: rise 220ms var(--ease) backwards;
 }
 .search-list li {
   display: flex;
@@ -3261,7 +3261,7 @@ a.glance-card:hover .glance-more {
   background: var(--panel);
 }
 .reading-toggle[open] > div {
-  animation: rise 420ms var(--ease) both;
+  animation: rise 420ms var(--ease) backwards;
 }
 .technical-head {
   position: relative;
@@ -3769,7 +3769,7 @@ table.wallet-packs {
   .radar-title .eyebrow::after {
     animation: none !important;
   }
-  html.motion [data-reveal] {
+  html.motion [data-reveal="pending"] {
     opacity: 1;
     transform: none;
   }

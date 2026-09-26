@@ -131,6 +131,18 @@ describe("error policy (§8.4)", () => {
     expect(ledger.totals().unresolved).toBe(3);
   });
 
+  it("a body that times out after the provider answered is settled at the reported cost and not retried", async () => {
+    const { client, db, ledger, fake } = setup(() => ({ status: 200, body: tokenInfoBody, throws: "body_timeout", headers: { "x-nansen-credits-used": "1" } }));
+    const r = await client.call(TOKEN_INFORMATION, infoReq, { ...meta });
+    expect(r.ok === false && r.code).toBe("timeout");
+    expect(r.ok === false && r.retryable).toBe(false);
+    expect(fake.calls).toBe(1);
+    const rows = db.prepare("SELECT http_status, http_outcome, reservation_status, actual_credits, error_code FROM api_usage").all();
+    expect(rows).toEqual([{ http_status: 200, http_outcome: "timeout", reservation_status: "settled", actual_credits: 1, error_code: "body_not_received" }]);
+    expect(ledger.totals().settled).toBe(1);
+    expect(ledger.totals().unresolved).toBe(0);
+  });
+
   it("400/422 are not retried and are recorded as adapter failures", async () => {
     const { client, fake } = setup(() => ({ status: 422, body: { code: "invalid_field_value" }, headers: { "x-nansen-credits-used": "0" } }));
     const r = await client.call(TOKEN_INFORMATION, infoReq, meta);

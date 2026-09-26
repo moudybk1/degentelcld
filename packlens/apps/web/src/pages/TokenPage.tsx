@@ -50,7 +50,7 @@ export function TokenPage() {
       ) : data ? (
         <>
           <header className="id-head">
-            <div className="row" style={{ gap: 22, alignItems: "flex-end", flexWrap: "nowrap", minWidth: 0 }}>
+            <div className="row" style={{ gap: "14px 22px", alignItems: "flex-end", minWidth: 0 }}>
               <TokenAvatar mint={mint} symbol={data.token.symbol} name={data.token.name} image={data.token.imageUrl} large />
               <div className="row" style={{ gap: 8 }}>
                 <ModeBadge mode={meta?.mode} />
