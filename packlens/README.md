@@ -237,7 +237,7 @@ Full report with commands and outputs: [`docs/test-report.md`](docs/test-report.
 - **Live usage (G3/G4), 2026-09-25 10:57–11:12 UTC:** 24,490 real pump.fun trades decoded (0.34% late, 0 unpriced SOL trades), **149 packs** detected (largest 108 wallets), 15 packs analyzed, 136 Smart Money observations, and one pack with a confirmed Smart Money member (1 of 6, matched by transaction hash, wallet, and mint). Four graceful restarts preserved packs, cooldowns, the session, and the ledger.
 - **Nansen usage:** 272 attempts, **260 schema-valid responses** (the 100-call target is met), 492 credits settled, 16 unresolved (timeouts), 6 cache hits. Aggregate manifest: [`docs/usage-manifest.json`](docs/usage-manifest.json).
 
-| Pack detail (live) | Smart Money on the token (live) |
+| Pack detail (live) | Smart Money activity (live) |
 |---|---|
 | ![Pack detail](docs/screenshots/pack-live.png) | ![Smart Money](docs/screenshots/smart-money-live.png) |
 
