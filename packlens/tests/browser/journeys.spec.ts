@@ -129,13 +129,11 @@ test("token page without a pack says so, and Smart Money activity cannot create 
   await page.goto("/smart-money");
   await expect(page.getByRole("heading", { level: 1 })).toContainText("Smart Money");
   await expect(page.getByText("they never create or change packs")).toBeVisible();
-  // pump.fun launches first, with how soon after launch; "All tokens" widens the list.
-  await expect(page.getByRole("button", { name: "pump.fun launches" })).toHaveAttribute("aria-pressed", "true");
+  // One list, pump.fun tokens only, with how soon after launch.
+  await expect(page.getByRole("group", { name: "Tokens shown" })).toHaveCount(0);
   await expect(page.getByRole("columnheader", { name: "After launch" })).toBeVisible();
-  const pumpRows = await page.getByRole("row").count();
-  await page.getByRole("button", { name: "All tokens" }).click();
-  await expect(page.getByRole("button", { name: "All tokens" })).toHaveAttribute("aria-pressed", "true");
-  await expect.poll(() => page.getByRole("row").count()).toBeGreaterThanOrEqual(pumpRows);
+  await expect(page.getByText("Smart Money trades in other tokens are left out")).toBeVisible();
+  await expect(page.getByRole("row", { name: /GRVL/ }).first()).toBeVisible();
   await page.getByRole("row", { name: /GRVL/ }).first().getByRole("link", { name: "GRVL" }).click();
   await expect(page.getByText("No pack detected in the monitored source")).toBeVisible();
 });
