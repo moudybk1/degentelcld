@@ -81,7 +81,7 @@ export function buildReadout(i: ReadoutInput): ReadoutItem[] {
     add("happened", `None of the ${m.count} pack wallets have sold in the observed trades.`);
   } else {
     const firstSell = m.firstSellAt ? ` The first sale came ${duration(Date.parse(m.firstSellAt) - i.core.firstEventTimeMs)} after the first pack buy.` : "";
-    add("happened", `${m.sold} of ${m.count} pack wallets ${m.sold === 1 ? "has" : "have"} sold, ${Math.round((m.soldShare ?? 0) * 100)}% of the tokens they bought.${firstSell}`);
+    add("happened", `${m.sold} of ${m.count} pack wallets ${m.sold === 1 ? "has" : "have"} sold some; together ${Math.round((m.soldShare ?? 0) * 100)}% of the tokens they bought is sold.${firstSell}`);
   }
   if (tradesAfter > 0) {
     const net = Number(i.after.activity.netSol);

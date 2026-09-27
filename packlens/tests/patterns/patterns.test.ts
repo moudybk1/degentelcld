@@ -3,10 +3,13 @@ import type { PackMember } from "@packlens/contracts";
 import { buySizeCV, computePatterns, largestBuyerShare } from "../../apps/server/src/patterns/indicators.js";
 import { deriveAnalysisState, observedTopShare } from "../../apps/server/src/assessment/assessment.js";
 import { orderCandidates } from "../../apps/server/src/enrichment/scheduler.js";
-import { RetentionJob } from "../../apps/server/src/operations/retention.js";
+import { RetentionJob, retentionFloorKey } from "../../apps/server/src/operations/retention.js";
+import { ensureNamespace } from "../../apps/server/src/replay/runner.js";
 import { VirtualClock } from "../../apps/server/src/clock.js";
 import { Decimal } from "../../apps/server/src/lib/decimal.js";
-import { addr, harness, T0, tradeEvent } from "../helpers.js";
+import { addr, harness, T0, testDb, tradeEvent } from "../helpers.js";
+
+const DAY = 86_400_000;
 
 const m = (w: string, usd: string, first: number, kind: "initial" | "expanded" = "initial"): PackMember => ({
   packId: "p", walletAddress: addr(w), memberKind: kind, firstEntryTimeMs: T0 + first, initialFirstEntryTimeMs: kind === "initial" ? T0 + first : null, joinedAtEventTimeMs: T0, eligibleBuyUsd: usd, eventIds: [],
@@ -86,6 +89,41 @@ describe("retention", () => {
     expect(r.events).toBe(1); // only the non-pack sell
     expect(h.db.prepare("SELECT COUNT(*) AS n FROM trade_events").get()).toEqual({ n: 3 });
     expect(h.packs()).toHaveLength(1);
+  });
+
+  it("resumes each scan from a stored floor and deletes every row that shares the floor's event time", () => {
+    const h = harness("live:floor");
+    // A pack at T0, then 600 non-pack sells at one event time (more than two batches share it).
+    h.feed([tradeEvent("live:floor", "e1", "A", 0, "20"), tradeEvent("live:floor", "e2", "B", 7000, "20"), tradeEvent("live:floor", "e3", "C", 20000, "20")]);
+    h.feed(Array.from({ length: 600 }, (_, i) => tradeEvent("live:floor", `s${i}`, `S${i}`, 30_000, "20", { side: "sell" })));
+    h.flushTo(90_000);
+    const run = (atMs: number) => new RetentionJob(h.db, new VirtualClock(T0 + atMs)).runOnce();
+    const floor = () => Number(h.db.prepare("SELECT value FROM meta WHERE key = ?").pluck().get(retentionFloorKey("live:floor")));
+
+    expect(run(3_600_000).events).toBe(0); // nothing is 24 h old yet
+    expect(run(DAY + 3_600_000).events).toBe(600);
+    expect(h.db.prepare("SELECT COUNT(*) FROM trade_events").pluck().get()).toBe(3); // pack evidence stays
+    expect(floor()).toBe(T0 + 30_000); // the newest deleted time (later than the cutoff minus the one-hour overlap)
+
+    // Later trades age out on a later run; the kept evidence before the floor is not scanned again.
+    h.feed([tradeEvent("live:floor", "late-sell", "L", 3 * 3_600_000, "20", { side: "sell" })]);
+    h.flushTo(3 * 3_600_000 + 60_000);
+    expect(run(DAY + 4 * 3_600_000).events).toBe(1);
+    expect(floor()).toBe(T0 + 3 * 3_600_000);
+  });
+
+  it("deletes outbox rows older than 24 hours in batches through the created_at index", () => {
+    const db = testDb();
+    ensureNamespace(db, "live:ob", "live", "test", null, T0);
+    const insert = db.prepare("INSERT INTO event_outbox (namespace, event_type, aggregate_id, aggregate_version, created_at_ms, payload_json) VALUES ('live:ob', 'pack.updated', 'p', 1, ?, '{}')");
+    db.transaction(() => {
+      for (let i = 0; i < 2500; i++) insert.run(T0 + i);
+      insert.run(T0 + DAY);
+    })();
+    expect(new RetentionJob(db, new VirtualClock(T0 + DAY + 2500)).runOnce().outbox).toBe(2500);
+    expect(db.prepare("SELECT created_at_ms FROM event_outbox").pluck().all()).toEqual([T0 + DAY]);
+    const plan = (db.prepare("EXPLAIN QUERY PLAN SELECT sequence FROM event_outbox WHERE created_at_ms < ? ORDER BY created_at_ms LIMIT 1000").all(0) as { detail: string }[]).map((r) => r.detail).join(" ");
+    expect(plan).toContain("event_outbox_created");
   });
 });
 

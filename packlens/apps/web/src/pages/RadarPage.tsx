@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowUp, ArrowsClockwise, MagnifyingGlass, Question, Rows, SquaresFour, X } from "@phosphor-icons/react";
+import { Link } from "react-router";
+import { ArrowDown, ArrowRight, ArrowUp, ArrowsClockwise, MagnifyingGlass, Question, Rows, SquaresFour, X } from "@phosphor-icons/react";
 import type { AfterPackSummary, OverviewData, PackDetail, PackListData, PackListItem, SourceStatus } from "@packlens/contracts";
 import { apiGet, ApiError, track } from "../api/client";
 import { useEventListener } from "../api/events";
@@ -15,7 +16,7 @@ import { SizeBands } from "../components/SizeBands";
 import { Empty, ErrorNote, LoadingBlock, Note, Skeleton, Stat, Tag } from "../components/ui";
 import { clockUtc, int, relative, seconds, span, timeUtc, usdCompact } from "../lib/format";
 import type { GlossaryKey } from "../lib/glossary";
-import { useNamespace } from "../state/namespace";
+import { useNamespace, useNsHref } from "../state/namespace";
 import { ruleUsd, useRule } from "../lib/rule";
 
 type RangeKey = "1h" | "6h" | "24h" | "7d" | "all";
@@ -23,7 +24,8 @@ type Range = { kind: "preset"; key: RangeKey } | { kind: "custom"; fromMs: numbe
 type Filters = { minWallets: string; minUsd: string; mint: string; range: Range; confirmedOnly: boolean; includeInvalidated: boolean };
 type Params = Record<string, string | undefined>;
 
-const DEFAULT_FILTERS: Filters = { minWallets: "3", minUsd: "", mint: "", range: { kind: "preset", key: "all" }, confirmedOnly: false, includeInvalidated: false };
+// The last 24 hours by default: "All time" reads every stored pack, which grows by thousands a day.
+const DEFAULT_FILTERS: Filters = { minWallets: "3", minUsd: "", mint: "", range: { kind: "preset", key: "24h" }, confirmedOnly: false, includeInvalidated: false };
 const RANGES: { key: RangeKey; label: string; ms: number | null; name: string }[] = [
   { key: "1h", label: "1 h", ms: 3_600_000, name: "Last hour" },
   { key: "6h", label: "6 h", ms: 21_600_000, name: "Last 6 hours" },
@@ -32,11 +34,21 @@ const RANGES: { key: RangeKey; label: string; ms: number | null; name: string }[
   { key: "all", label: "All", ms: null, name: "All time" },
 ];
 const PAGE = 30;
+/** Transparent shortcuts over the existing filters; each says exactly what it keeps. */
+const QUICK_VIEWS: { key: string; label: string; why: string; minWallets: string; minUsd: string }[] = [
+  { key: "all", label: "All packs", why: "Every pack in the time range.", minWallets: "3", minUsd: "" },
+  { key: "groups", label: "Larger groups · 10+ wallets", why: "Packs in which 10 or more different wallets bought.", minWallets: "10", minUsd: "" },
+  { key: "buys", label: "Larger buys · $1,000+", why: "Packs whose own eligible buys add up to $1,000 or more.", minWallets: "3", minUsd: "1000" },
+];
 const VIEW_KEY = "packlens.radar.view";
 
-/** Ranges end now for live data; fixture and replay data are historical, so they end at the latest pack. */
+/**
+ * Ranges end now for live data; fixture and replay data are historical, so they end at the latest pack.
+ * Live starts are taken from the start of the current minute, so every viewer in that minute asks the
+ * server the same question and shares one cached answer.
+ */
 function anchorFor(status: SourceStatus | null): number {
-  return status && status.mode !== "live" && status.latestPackTriggerMs ? status.latestPackTriggerMs : Date.now();
+  return status && status.mode !== "live" && status.latestPackTriggerMs ? status.latestPackTriggerMs : Math.floor(Date.now() / 60_000) * 60_000;
 }
 
 function filterParams(f: Filters, anchorMs: number): Params {
@@ -103,6 +115,7 @@ function readView(): "table" | "cards" {
 
 export function RadarPage({ status }: { status: SourceStatus | null }) {
   const namespace = useNamespace();
+  const href = useNsHref();
   const now = useNow(5000);
   const narrow = useMediaQuery("(max-width: 860px)");
   const rule = useRule();
@@ -125,6 +138,9 @@ export function RadarPage({ status }: { status: SourceStatus | null }) {
   const activeParams = useRef<Params>({});
   const statusRef = useRef(status);
   statusRef.current = status;
+  // Preset ranges end now for live data (also while the mode is still unknown) or at the latest pack of historical data;
+  // the radar reloads once when a historical anchor becomes known.
+  const anchorKey = status && status.mode !== "live" && status.latestPackTriggerMs ? status.latestPackTriggerMs : "now";
   const feedRef = useRef<HTMLElement | null>(null);
   const [guideDismissed, setGuideDismissed] = useState(() => {
     try {
@@ -181,8 +197,13 @@ export function RadarPage({ status }: { status: SourceStatus | null }) {
       });
   }, []);
 
+  /** The current filters as query parameters, with a preset range ending at the current anchor. */
+  const paramsNow = useCallback((): Params => ({ ...filterParams(filters, anchorFor(statusRef.current)), ...(namespace ? { namespace } : {}) }), [filters, namespace]);
+  const paramsNowRef = useRef(paramsNow);
+  paramsNowRef.current = paramsNow;
+
   const loadAll = useCallback(() => {
-    const params: Params = { ...filterParams(filters, anchorFor(statusRef.current)), ...(namespace ? { namespace } : {}) };
+    const params = paramsNow();
     activeParams.current = params;
     setLoading(true);
     const ctrl = new AbortController();
@@ -201,9 +222,9 @@ export function RadarPage({ status }: { status: SourceStatus | null }) {
       .finally(() => setLoading(false));
     loadOverview(params, ctrl.signal);
     return () => ctrl.abort();
-  }, [filters, namespace, loadOverview]);
+  }, [paramsNow, loadOverview]);
 
-  useEffect(() => loadAll(), [loadAll]);
+  useEffect(() => loadAll(), [loadAll, anchorKey]);
 
   const loadMore = () => {
     if (!cursor) return;
@@ -242,7 +263,8 @@ export function RadarPage({ status }: { status: SourceStatus | null }) {
     if (overviewTimer.current) return;
     overviewTimer.current = setTimeout(() => {
       overviewTimer.current = null;
-      loadOverview(activeParams.current);
+      // A preset range slides with time, so viewers in the same minute share one cached overview on the server.
+      loadOverview(paramsNowRef.current());
     }, 4000);
   }, [loadOverview]);
 
@@ -285,7 +307,7 @@ export function RadarPage({ status }: { status: SourceStatus | null }) {
           .then((res) => setItems((prev) => prev.map((p) => (res.data.items[p.core.id] ? { ...p, after: res.data.items[p.core.id]! } : p))))
           .catch(() => undefined);
       }
-      loadOverview(activeParams.current);
+      loadOverview(paramsNowRef.current());
     }, 20_000);
     return () => clearInterval(t);
   }, [namespace, loadOverview]);
@@ -358,8 +380,9 @@ export function RadarPage({ status }: { status: SourceStatus | null }) {
           <h1 className="h1">
             Pack Radar<span className="h1-mark" aria-hidden="true">.</span>
           </h1>
+          <p className="radar-lede">See which wallets bought together, and what they did next.</p>
           <p className="radar-sub">
-            Live groups of wallets buying the same token at almost the same time, with the transactions behind them and what happened next.
+            Investigate grouped pump.fun buys with transaction evidence, wallet activity, and Nansen context.
             {guideDismissed && (
               <>
                 {" "}
@@ -369,6 +392,25 @@ export function RadarPage({ status }: { status: SourceStatus | null }) {
               </>
             )}
           </p>
+          <div className="hero-actions">
+            <a
+              className="hero-cta"
+              href="#radar-list"
+              onClick={(e) => {
+                e.preventDefault();
+                feedRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+              }}
+            >
+              {status?.mode === "live" ? "View live packs" : "View packs"}
+              <ArrowDown size={13} weight="bold" aria-hidden="true" />
+            </a>
+            {o?.example && (
+              <Link className="hero-cta ghost" to={href(`/packs/${o.example.id}`)} title="A pack with complete Nansen analysis, old enough that what happened after it is known.">
+                Explore an example: {o.example.token.symbol || o.example.token.name || "pack"} · {o.example.totalWalletCount} wallets
+                <ArrowRight size={13} weight="bold" aria-hidden="true" />
+              </Link>
+            )}
+          </div>
         </div>
         <Reticle windowSeconds={rule.triggerWindowSeconds} joinSeconds={rule.expansionSeconds} />
         <dl className="head-facts">
@@ -391,11 +433,14 @@ export function RadarPage({ status }: { status: SourceStatus | null }) {
             <dd>
               <Decode text={status?.countersPending ? "Counting…" : int(status?.counters.buys ?? null)} />
             </dd>
-            <dd className="fact-note">
+            <dd
+              className="fact-note"
+              title="Eligible: buys that passed the per-buy USD check. Without a USD value: trades paid in a token other than SOL (or made while no fresh SOL price was available), which cannot be checked. Late: arrived after the detector had already moved past their time."
+            >
               {status?.countersPending
                 ? "Counting the stored buys in the background"
                 : status
-                  ? `${int(status.counters.eligible)} eligible · ${int(status.counters.unvalued)} unvalued · ${int(status.counters.late)} late`
+                  ? `${int(status.counters.eligible)} eligible · ${int(status.counters.unvalued)} without a USD value · ${int(status.counters.late)} late`
                   : "n/a"}
             </dd>
           </div>
@@ -423,13 +468,13 @@ export function RadarPage({ status }: { status: SourceStatus | null }) {
           </Note>
         ) : null}
         {!rule.isBaseline && (
-          <p className="inline-note">
-            Packs here follow a custom rule: {rule.minUniqueWallets} or more wallets, each buying {usdMin} or more within {rule.triggerWindowSeconds} seconds ({rule.version}). The spec baseline is 3 wallets and $20.
+          <p className="inline-note" title={`Rule version: ${rule.version}`}>
+            Packs here follow a custom rule: {rule.minUniqueWallets} or more wallets, each buying {usdMin} or more within {rule.triggerWindowSeconds} seconds. The spec baseline is 3 wallets and $20.
           </p>
         )}
         {status && status.mode === "live" && status.price.provider === "pyth" && (
-          <p className="inline-note">
-            Buys are valued with Pyth&apos;s on-chain SOL/USD price ({status.price.policyVersion}), published at most two minutes before each buy.
+          <p className="inline-note" title={`Price policy: ${status.price.policyVersion}`}>
+            Buys are valued with Pyth&apos;s on-chain SOL/USD price, published at most two minutes before each buy.
             <InfoTip
               label="the Pyth price"
               text="Pyth publishes a verified SOL/USD price on Solana about once a minute. Each buy uses the newest price published before it, fixed when the buy arrived. It costs no Nansen credits; Nansen is used for wallet, token, and Smart Money context. Detection rules are unchanged."
@@ -437,8 +482,8 @@ export function RadarPage({ status }: { status: SourceStatus | null }) {
           </p>
         )}
         {status && status.mode === "live" && status.price.provider === "nansen" && !status.price.isBaseline && (
-          <p className="inline-note">
-            Buys are valued with the documented {status.price.timeframe} price fallback ({status.price.policyVersion}), so values near {usdMin} are rougher estimates.
+          <p className="inline-note" title={`Price policy: ${status.price.policyVersion}`}>
+            Buys are valued with the documented {status.price.timeframe} price fallback, so values near {usdMin} are rougher estimates.
             <InfoTip
               label="the price fallback"
               text={`Nansen 1m SOL candles time out upstream, so buys are valued with the latest closed ${status.price.timeframe} candle, up to 15 minutes old. Detection rules are unchanged.`}
@@ -456,6 +501,28 @@ export function RadarPage({ status }: { status: SourceStatus | null }) {
         <h2 id="radar-filters" className="sr-only">
           Filters
         </h2>
+        <div className="toolbar-row quick" role="group" aria-label="Quick views">
+          <span className="quick-label">Quick views</span>
+          {QUICK_VIEWS.map((q) => {
+            const active = filters.minWallets === q.minWallets && filters.minUsd === q.minUsd;
+            return (
+              <button
+                key={q.key}
+                type="button"
+                className={`chip${active ? " on" : ""}`}
+                aria-pressed={active}
+                title={q.why}
+                onClick={() => {
+                  setFilters((f) => ({ ...f, minWallets: q.minWallets, minUsd: q.minUsd }));
+                  setDraft((d) => ({ ...d, minUsd: q.minUsd }));
+                  setFilterError(null);
+                }}
+              >
+                {q.label}
+              </button>
+            );
+          })}
+        </div>
         <div className="toolbar-row">
           <div className="seg" role="group" aria-label="Time range">
             {RANGES.map((r) => {

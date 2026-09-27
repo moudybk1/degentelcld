@@ -170,7 +170,8 @@ export type AppConfig = {
     pollSeconds: number;
     sessionEndAtMs: number | null;
   };
-  rpc: { httpUrl: string | null; wsUrl: string | null };
+  /** Fallbacks (optional) take over when the primary RPC keeps failing, for example when a keyed plan runs out of credits. */
+  rpc: { httpUrl: string | null; wsUrl: string | null; httpFallbackUrl: string | null; wsFallbackUrl: string | null };
   adminToken: string | null;
   holderConcentrationThreshold: string | null;
   enrichment: { autoPacksPerCycle: number; cycleSeconds: number; maxQueuedPacks: number };
@@ -315,6 +316,8 @@ const envSchema = z.object({
   NANSEN_API_KEY: optionalString,
   SOLANA_RPC_HTTP_URL: optionalString,
   SOLANA_RPC_WS_URL: optionalString,
+  SOLANA_RPC_HTTP_FALLBACK_URL: optionalString,
+  SOLANA_RPC_WS_FALLBACK_URL: optionalString,
   ADMIN_TOKEN: optionalString,
   QUOTE_ASSET_ALLOWLIST: optionalString,
   NANSEN_SESSION_END_AT: optionalString,
@@ -424,6 +427,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, nowMs: number =
   };
   validateUrl(e.SOLANA_RPC_HTTP_URL, "SOLANA_RPC_HTTP_URL", ["https:", "http:"]);
   validateUrl(e.SOLANA_RPC_WS_URL, "SOLANA_RPC_WS_URL", ["wss:", "ws:"]);
+  validateUrl(e.SOLANA_RPC_HTTP_FALLBACK_URL, "SOLANA_RPC_HTTP_FALLBACK_URL", ["https:", "http:"]);
+  validateUrl(e.SOLANA_RPC_WS_FALLBACK_URL, "SOLANA_RPC_WS_FALLBACK_URL", ["wss:", "ws:"]);
 
   if (e.APP_MODE === "live") {
     if (e.NANSEN_API_KEY === null) problems.push("NANSEN_API_KEY is required in live mode (backend secret)");
@@ -486,7 +491,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env, nowMs: number =
       pollSeconds: e.SMART_MONEY_POLL_SECONDS,
       sessionEndAtMs: smEnd,
     },
-    rpc: { httpUrl: e.SOLANA_RPC_HTTP_URL, wsUrl: e.SOLANA_RPC_WS_URL },
+    rpc: { httpUrl: e.SOLANA_RPC_HTTP_URL, wsUrl: e.SOLANA_RPC_WS_URL, httpFallbackUrl: e.SOLANA_RPC_HTTP_FALLBACK_URL, wsFallbackUrl: e.SOLANA_RPC_WS_FALLBACK_URL },
     adminToken: e.ADMIN_TOKEN,
     holderConcentrationThreshold: threshold,
     enrichment: { autoPacksPerCycle: e.ENRICHMENT_AUTO_PACKS_PER_CYCLE, cycleSeconds: e.ENRICHMENT_CYCLE_SECONDS, maxQueuedPacks: 50 },

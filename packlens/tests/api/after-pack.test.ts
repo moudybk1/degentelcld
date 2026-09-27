@@ -190,7 +190,7 @@ describe("readout rules", () => {
 
   it("flags a large move and uses singular grammar for one seller", () => {
     const r = buildReadout(base());
-    expect(texts(r, "happened").join(" ")).toMatch(/1 of 3 pack wallets has sold, 30% of the tokens they bought/);
+    expect(texts(r, "happened").join(" ")).toMatch(/1 of 3 pack wallets has sold some; together 30% of the tokens they bought is sold/);
     expect(texts(r, "check").join(" ")).toMatch(/already \+200% above the pack's entry/);
   });
 

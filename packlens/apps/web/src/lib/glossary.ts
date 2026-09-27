@@ -49,8 +49,8 @@ export const GLOSSARY = {
     text: "The highest trade price observed after the pack formed, compared with the pack's average entry price.",
   },
   membersSold: {
-    term: "Pack wallets sold",
-    text: "How many pack wallets have sold some of this token since their first buy, and what share of the tokens they bought has been sold.",
+    term: "Pack wallets that sold some",
+    text: "How many pack wallets have sold at least some of this token since their first buy (one sell counts), and, separately, what share of the tokens they bought has been sold. Only observed pump.fun bonding-curve trades count: transfers and later trades on other venues are not seen.",
   },
   activity: {
     term: "Activity since the pack",

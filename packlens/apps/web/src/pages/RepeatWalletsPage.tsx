@@ -127,7 +127,15 @@ export function RepeatWalletsPage() {
                     <td className="num">
                       <PnlCell row={r} />
                     </td>
-                    <td className="num">{r.pnl.data?.winRate ? pct(r.pnl.data.winRate, 0) : <span className="muted">n/a</span>}</td>
+                    <td className="num">
+                      {r.pnl.data?.winRate && r.pnl.data.tradedTimes !== 0 ? (
+                        pct(r.pnl.data.winRate, 0)
+                      ) : (
+                        <span className="muted" title={r.pnl.data?.tradedTimes === 0 ? "Nansen counted no sells in this period, so there is no win rate (not 0%)." : "No Nansen profile for this wallet yet."}>
+                          N/A
+                        </span>
+                      )}
+                    </td>
                     <td className="num">{r.pnl.data?.tradedTokenCount != null ? int(r.pnl.data.tradedTokenCount) : <span className="muted">n/a</span>}</td>
                     <td className="num">{r.related.count !== null ? int(r.related.count) : <span className="muted">n/a</span>}</td>
                     <td className="small">

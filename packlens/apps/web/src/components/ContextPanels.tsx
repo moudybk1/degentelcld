@@ -157,7 +157,15 @@ export function WalletProfileCard({ ctx, mint, synthetic, title }: { ctx: Wallet
               </div>
               <div className="span-3">
                 <div className="stat-label">Win rate</div>
-                <div className="metric-value" style={{ fontSize: 18 }}>{pct(pnl.winRate, 0)}</div>
+                <div className="metric-value" style={{ fontSize: 18 }}>
+                  {pnl.tradedTimes === 0 ? (
+                    <span className="muted" title="Nansen counted no sells in this period, so there is no win rate (not 0%).">
+                      N/A · no sells
+                    </span>
+                  ) : (
+                    pct(pnl.winRate, 0)
+                  )}
+                </div>
               </div>
               <div className="span-3">
                 <div className="stat-label">Sells counted</div>
@@ -174,7 +182,8 @@ export function WalletProfileCard({ ctx, mint, synthetic, title }: { ctx: Wallet
             </p>
           )}
           <p className="tiny muted" style={{ margin: "6px 0 0" }}>
-            Win rate describes this period's sells only; it is not a probability for this token.
+            Win rate describes this period's sells only; it is not a probability for this token. Nansen&apos;s figures cover what Nansen indexed for this wallet in the period, which can differ from
+            the pack trades observed here; a zero is not a verified full history.
           </p>
         </div>
 

@@ -13,8 +13,9 @@ export type FactTone = "attention" | "neutral" | "unknown";
 export function groupSold(sold: number, count: number): { label: string; tone: "outline" | "yellow" | "red"; title: string } {
   if (count <= 0) return { label: "n/a", tone: "outline", title: "No pack wallets" };
   if (sold === 0) return { label: "None sold", tone: "outline", title: `None of the ${count} pack wallets has sold in the observed trades.` };
-  if (sold >= count) return { label: `All ${count} sold`, tone: "red", title: `Every pack wallet has sold some of this token since its first buy.` };
-  return { label: `${sold} of ${count} sold`, tone: "yellow", title: `${sold} of ${count} pack wallets have sold some of this token since their first buy.` };
+  // "Sold some": any sell counts; how much of their tokens they sold is on the pack page.
+  if (sold >= count) return { label: `${count}/${count} sold some`, tone: "red", title: `Every pack wallet has sold at least some of this token since its first buy. The pack page shows how much of the bought tokens was sold.` };
+  return { label: `${sold}/${count} sold some`, tone: "yellow", title: `${sold} of ${count} pack wallets have sold at least some of this token since their first buy. The pack page shows how much of the bought tokens was sold.` };
 }
 
 /** The first wallets' entry window in words. */

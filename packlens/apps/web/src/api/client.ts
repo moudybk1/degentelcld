@@ -1,4 +1,5 @@
 import type { ApiError as ApiErrorBody, Envelope } from "@packlens/contracts";
+import { tokenTextReviver } from "../lib/tokenText";
 
 export class ApiError extends Error {
   constructor(
@@ -31,7 +32,7 @@ async function parse<T>(res: Response): Promise<T> {
   const text = await res.text();
   let body: unknown;
   try {
-    body = text ? JSON.parse(text) : null;
+    body = text ? JSON.parse(text, tokenTextReviver) : null;
   } catch {
     throw new ApiError(res.status, "INVALID_RESPONSE", "The server returned an unreadable response.", null);
   }

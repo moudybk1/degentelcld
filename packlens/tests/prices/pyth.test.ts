@@ -129,6 +129,28 @@ describe("PythPriceFeed", () => {
     expect(feed.status(config.price.quotes[0]!).state).toBe("valid");
   });
 
+  it("reads through the fallback RPC while the primary fails, and returns to the primary when it recovers", async () => {
+    const db = testDb();
+    ensureNamespace(db, "live:t", "live", "t", null, T0);
+    const clock = new VirtualClock(Date.parse("2026-09-26T04:42:20Z"));
+    const config = loadConfig({ ...env, SOLANA_RPC_HTTP_FALLBACK_URL: "https://fallback.test" }, clock.now());
+    let primaryDown = true;
+    const calls: string[] = [];
+    const feed = new PythPriceFeed(config, clock, new PriceStore(db, "live:t", clock), async (url) => {
+      calls.push(new URL(url).host);
+      if (url.startsWith("https://rpc.test") && primaryDown) return { status: 429, headers: { get: () => null }, text: async () => "{}" };
+      return { status: 200, headers: { get: () => null }, text: async () => JSON.stringify(ok()().body) };
+    });
+    expect(await feed.pollQuote(config.price.quotes[0]!)).toBe(true);
+    expect(calls).toEqual(["rpc.test", "fallback.test"]);
+    expect(feed.usingFallback).toBe(true);
+    expect(feed.lastError).toBeNull();
+    primaryDown = false;
+    await feed.pollQuote(config.price.quotes[0]!);
+    expect(calls.slice(2)).toEqual(["rpc.test"]);
+    expect(feed.usingFallback).toBe(false);
+  });
+
   it("resumes from the newest stored price after a restart instead of storing it twice", async () => {
     const first = setup([ok()]);
     await first.feed.pollQuote(first.config.price.quotes[0]!);

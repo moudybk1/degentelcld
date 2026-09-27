@@ -61,8 +61,18 @@ export function AfterSection({ core, after, synthetic }: { core: Pack; after: Af
   const rows = useRowLimit(after.members.rows, 25);
   const tradesAfter = after.activity.buys + after.activity.sells;
   const net = Number(after.activity.netSol);
+  const graduatedMs = after.graduatedAt ? Date.parse(after.graduatedAt) : null;
   return (
     <div className="stack" style={{ gap: 14 }}>
+      {graduatedMs !== null && (
+        <Note tone="yellow" icon="warn">
+          <strong>
+            Observation ends at {timeUtc(graduatedMs)}
+            {graduatedMs > core.triggerEventTimeMs ? `, ${secondsLabel(Math.round((graduatedMs - core.triggerEventTimeMs) / 1000))} after the pack formed` : ""}.
+          </strong>{" "}
+          The token left the pump.fun bonding curve then. Trades and sells after that happen on other venues and are not in these figures or the chart.
+        </Note>
+      )}
       <div className="bento">
         <div className="card span-3">
           <div className="stat">
@@ -92,14 +102,14 @@ export function AfterSection({ core, after, synthetic }: { core: Pack; after: Af
         <div className="card span-3">
           <div className="stat">
             <span className="stat-label">
-              Pack wallets sold
+              Pack wallets that sold some
               <InfoTip k="membersSold" />
             </span>
             <span className="stat-value">
               {after.members.sold} <span className="muted" style={{ fontSize: 16 }}>of {after.members.count}</span>
             </span>
             <span className="stat-note">
-              {after.members.soldShare === null ? "No observed buys to compare" : `${Math.round(after.members.soldShare * 100)}% of their tokens sold · ${after.members.exited} fully out`}
+              {after.members.soldShare === null ? "No observed buys to compare" : `${Math.round(after.members.soldShare * 100)}% of the tokens they bought sold · ${after.members.exited} sold all they bought`}
             </span>
           </div>
         </div>
@@ -156,7 +166,11 @@ export function AfterSection({ core, after, synthetic }: { core: Pack; after: Af
                 <td>{r.memberKind === "initial" ? <Tag>Initial</Tag> : <Tag tone="outline">Expanded</Tag>}</td>
                 <td className="num">{decimal(r.tokensBought, 0)}</td>
                 <td className="num">
-                  {r.soldShare >= 0.99 ? <Tag tone="red">All sold</Tag> : r.soldShare > 0 ? <span>{Math.round(r.soldShare * 100)}%</span> : <span className="muted">Holding</span>}
+                  {r.soldShare >= 0.99 ? (
+                    <Tag tone="red" title="Sold at least 99% of the tokens it bought in the observed pump.fun trades. Transfers and trades on other venues are not seen.">
+                      Sold all bought
+                    </Tag>
+                  ) : r.soldShare > 0 ? <span>{Math.round(r.soldShare * 100)}%</span> : <span className="muted" title="No sell of this token observed; tokens moved by transfer are not seen.">None seen</span>}
                 </td>
                 <td className="small">
                   {r.secondsToFirstSell === null ? <span className="muted">No sale observed</span> : r.secondsToFirstSell === 0 ? "Same second as first buy" : `${secondsLabel(r.secondsToFirstSell)} after first buy`}
@@ -175,44 +189,112 @@ export function AfterSection({ core, after, synthetic }: { core: Pack; after: Af
   );
 }
 
+const OUTCOME_NOTE: Record<"gap" | "graduated" | "data_ended", string> = {
+  gap: "The collector was disconnected during these 15 minutes, so trades may be missing.",
+  graduated: "The token left the bonding curve during these 15 minutes; trades after that happen elsewhere and are not observed.",
+  data_ended: "The recorded data ends before these 15 minutes did.",
+};
+
+/** "+14:52": time after a pack formed. */
+function afterClock(ms: number): string {
+  const s = Math.max(0, Math.round(ms / 1000));
+  return `+${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}
+
+function PeakCell({ p }: { p: EarlierPack }) {
+  if (p.outcomeState === "observing") {
+    return p.peakSoFarPct === null || p.peakSoFarPct === undefined ? <span className="muted">No trades yet</span> : (
+      <span title="Highest price so far; the 15 minutes are not over.">
+        <span className="tiny muted">so far </span>
+        <Delta pct={p.peakSoFarPct} />
+      </span>
+    );
+  }
+  return p.peakChangePct15m === null ? <span className="muted">No trades</span> : <Delta pct={p.peakChangePct15m} />;
+}
+
+function AtCutoffCell({ p }: { p: EarlierPack }) {
+  if (p.outcomeState === "observing") {
+    const mins = Math.floor((p.observedMs ?? 0) / 60_000);
+    return (
+      <span className="outcome-observing" title="These 15 minutes are not over yet, so there is no 15-minute result.">
+        <Tag tone="outline">Observing · {mins}/15 min</Tag>
+        {p.outcomeNote === "gap" && (
+          <Tag tone="yellow" title={OUTCOME_NOTE.gap}>
+            Gap
+          </Tag>
+        )}
+        {p.changeSoFarPct !== null && p.changeSoFarPct !== undefined && (
+          <span className="tiny muted">
+            latest <Delta pct={p.changeSoFarPct} />
+          </span>
+        )}
+      </span>
+    );
+  }
+  if (p.changePct15m === null) return <span className="muted">No trades</span>;
+  const at = p.priceAtMs !== null && p.priceAtMs !== undefined ? afterClock(p.priceAtMs - p.triggerEventTimeMs) : null;
+  return (
+    <span className="outcome-cell">
+      <Delta pct={p.changePct15m} />
+      {at && <span className="tiny muted" title="Time of the last observed trade at or before 15:00 after that pack formed.">at {at}</span>}
+      {p.outcomeState === "partial" && p.outcomeNote && (
+        <Tag tone="yellow" title={OUTCOME_NOTE[p.outcomeNote]}>
+          Partial
+        </Tag>
+      )}
+    </span>
+  );
+}
+
 export function EarlierPacksTable({ packs }: { packs: EarlierPack[] }) {
   const href = useNsHref();
   if (packs.length === 0) {
     return <Empty title="No earlier packs with two or more of these wallets">In the data observed so far, this group of wallets has not bought together before.</Empty>;
   }
   return (
-    <div className="table-wrap">
-      <table className="table">
-        <caption className="sr-only">Earlier packs from the previous 7 days that share at least two wallets with this pack</caption>
-        <thead>
-          <tr>
-            <th scope="col">Token</th>
-            <th scope="col">Formed</th>
-            <th scope="col" className="num">Shared wallets</th>
-            <th scope="col" className="num">Pack buys</th>
-            <th scope="col" className="num">Peak in 15 min</th>
-            <th scope="col" className="num">At 15 min</th>
-          </tr>
-        </thead>
-        <tbody>
-          {packs.map((p) => (
-            <tr key={p.packId}>
-              <td>
-                <Link className="text-link" to={href(`/packs/${p.packId}`)}>
-                  {p.tokenSymbol || p.tokenName || shortAddr(p.tokenAddress)}
-                </Link>
-              </td>
-              <td className="mono small">{dateTimeUtc(p.triggerEventTimeMs)}</td>
-              <td className="num">
-                {p.sharedWallets} of {p.totalWalletCount}
-              </td>
-              <td className="num">{usd(p.eligibleBuyUsd)}</td>
-              <td className="num">{p.peakChangePct15m === null ? <span className="muted">Not observed</span> : <Delta pct={p.peakChangePct15m} />}</td>
-              <td className="num">{p.changePct15m === null ? <span className="muted">Not observed</span> : <Delta pct={p.changePct15m} />}</td>
+    <div className="stack" style={{ gap: 10 }}>
+      <div className="table-wrap">
+        <table className="table">
+          <caption className="sr-only">Earlier packs from the previous 7 days that share at least two wallets with this pack</caption>
+          <thead>
+            <tr>
+              <th scope="col">Token</th>
+              <th scope="col">Formed</th>
+              <th scope="col" className="num">Shared wallets</th>
+              <th scope="col" className="num">Pack buys</th>
+              <th scope="col" className="num">Peak in 15 min</th>
+              <th scope="col" className="num">At 15 min</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {packs.map((p) => (
+              <tr key={p.packId}>
+                <td>
+                  <Link className="text-link" to={href(`/packs/${p.packId}`)}>
+                    {p.tokenSymbol || p.tokenName || shortAddr(p.tokenAddress)}
+                  </Link>
+                </td>
+                <td className="mono small">{dateTimeUtc(p.triggerEventTimeMs)}</td>
+                <td className="num">
+                  {p.sharedWallets} of {p.totalWalletCount}
+                </td>
+                <td className="num">{usd(p.eligibleBuyUsd)}</td>
+                <td className="num">
+                  <PeakCell p={p} />
+                </td>
+                <td className="num">
+                  <AtCutoffCell p={p} />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="tiny muted" style={{ margin: 0 }}>
+        At 15 min: the last observed trade at or before 15:00 after that pack formed, against that pack&apos;s own entry price. A pack less than 15 minutes old shows Observing until its
+        15 minutes are over; Partial means a gap, the end of the bonding curve, or the end of the data cut the 15 minutes short.
+      </p>
     </div>
   );
 }

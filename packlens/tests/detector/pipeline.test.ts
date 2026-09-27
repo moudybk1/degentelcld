@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { VirtualClock } from "../../apps/server/src/clock.js";
 import { BASELINE_DETECTOR_CONFIG } from "../../apps/server/src/config.js";
 import { DetectorEngine } from "../../apps/server/src/ingest/engine.js";
-import { IngestPipeline } from "../../apps/server/src/ingest/pipeline.js";
+import { IngestPipeline, PENDING_SQL } from "../../apps/server/src/ingest/pipeline.js";
 import { OutboxBus, readOutboxAfter } from "../../apps/server/src/ingest/outbox.js";
 import { ensureNamespace, semanticDigest } from "../../apps/server/src/replay/runner.js";
 import { harness, members, T0, testDb, tradeEvent } from "../helpers.js";
@@ -85,6 +85,11 @@ describe("ordering buffer and watermark (§5.4)", () => {
 });
 
 describe("persistence and recovery", () => {
+  it("restores pending events through the partial pending index, not by reading every stored trade", () => {
+    const plan = (testDb().prepare(`EXPLAIN QUERY PLAN ${PENDING_SQL}`).all(NS) as { detail: string }[]).map((r) => r.detail).join(" ");
+    expect(plan).toContain("trade_events_pending");
+  });
+
   it("T35 / T49: restart restores pending events with their original admission and the cooldown", () => {
     const db = testDb();
     const h = harness(NS, db);

@@ -1,0 +1,5 @@
+# Pages are welcome; the API is not for crawlers (every page view already calls it).
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /operator

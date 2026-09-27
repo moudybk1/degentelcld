@@ -23,7 +23,9 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
 ProtectHome=true
-MemoryMax=3G
+# The cap covers the process and the page cache of its database; a larger cache keeps
+# SQLite reads off a slow VPS disk (3G was full of cache on a 14 GB database).
+MemoryMax=5G
 
 [Install]
 WantedBy=multi-user.target

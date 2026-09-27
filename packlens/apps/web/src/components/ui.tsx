@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { Link } from "react-router";
-import { ArrowUpRight, Check, Copy, Info, WarningCircle } from "@phosphor-icons/react";
+import { ArrowUpRight, Check, Copy, Info, LinkSimple, WarningCircle } from "@phosphor-icons/react";
 import type { Mode } from "@packlens/contracts";
 import { shortAddr } from "../lib/format";
 import { avatarTone } from "../lib/explorer";
@@ -21,7 +21,12 @@ export function Tag({ tone = "gray", children, dot, pulse, title, className }: {
 
 export function ModeBadge({ mode }: { mode: Mode | null | undefined }) {
   if (!mode) return null;
-  if (mode === "live") return <Tag tone="green" className="live" dot title="Live data from the pump.fun stream and Nansen">Live</Tag>;
+  if (mode === "live")
+    return (
+      <Tag tone="green" className="live" dot title="The pump.fun trade feed is live. Nansen panels and prices show their own check times.">
+        Live feed
+      </Tag>
+    );
   if (mode === "replay") return <Tag tone="yellow" dot title="Replay of a recorded dataset with its original times">Replay</Tag>;
   return <Tag tone="blue" dot title="Synthetic fixture data for offline use; not market observations">Example</Tag>;
 }
@@ -155,6 +160,27 @@ export function TradeLink({ href }: { href: string | null }) {
       <ArrowUpRight size={12} weight="bold" aria-hidden="true" />
       <span className="sr-only">(opens in a new tab)</span>
     </a>
+  );
+}
+
+/** Copies this page's address; for sharing a pack. */
+export function ShareLink({ label = "Copy link" }: { label?: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      type="button"
+      className="share-link"
+      onClick={() => {
+        const url = window.location.origin + window.location.pathname + window.location.search;
+        void navigator.clipboard?.writeText(url).then(() => {
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1600);
+        });
+      }}
+    >
+      {copied ? <Check size={12} weight="bold" aria-hidden="true" /> : <LinkSimple size={12} weight="bold" aria-hidden="true" />}
+      <span aria-live="polite">{copied ? "Link copied" : label}</span>
+    </button>
   );
 }
 

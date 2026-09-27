@@ -1,9 +1,10 @@
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import cookie from "@fastify/cookie";
 import fastifyStatic from "@fastify/static";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
+import { performance } from "node:perf_hooks";
 import { z } from "zod";
 import type { ApiError, Envelope, Mode, OperatorOverview, RadarFilters } from "@packlens/contracts";
 import type { Runtime } from "../runtime.js";
@@ -19,6 +20,8 @@ import { BusyError, RateLimiter, ReadGate, TtlCache } from "./protect.js";
 import { listManifests } from "../replay/dataset.js";
 import { latestOutboxSequence } from "../ingest/outbox.js";
 import { DECODER_VERSION } from "../collector/decoder.js";
+import { pageMeta, renderIndex } from "./pageMeta.js";
+import { log } from "../lib/log.js";
 
 type ErrorCode = ApiError["error"]["code"];
 
@@ -28,6 +31,7 @@ class HttpError extends Error {
     readonly code: ErrorCode,
     message: string,
     readonly retryable = false,
+    readonly retryAfterSeconds: number | null = null,
   ) {
     super(message);
   }
@@ -38,11 +42,21 @@ const ANALYTICS_EVENTS = ["radar_viewed", "pack_opened", "wallet_opened", "evide
 /** Public hosting limits (PUBLIC_HOSTING=true). */
 const PUBLIC_LIMITS = {
   apiPerMinute: 600,
+  /**
+   * Milliseconds of uncached heavy-read work one client may cause per minute.
+   * Reads share the event loop with ingestion, so a client that defeats the
+   * cache (a new query every time) is held to a third of the loop. An open
+   * radar tab refreshing its rows uses about 6 to 10 s (pack pages take ~0.3 s).
+   */
+  computeMsPerMinute: 20_000,
   analyticsPerMinute: 30,
   analyticsPerDay: 20_000,
   streamsPerClient: 6,
   streamsTotal: 1000,
   readCacheMs: 5000,
+  /** Overviews read every pack in their range; "All time" grows with every pack and changes slowly at that scale. */
+  overviewCacheMs: 15_000,
+  overviewAllCacheMs: 60_000,
   /** Heavy reads waiting for the gate before new ones get 503. */
   maxQueuedReads: 64,
 };
@@ -59,23 +73,34 @@ export function buildServer(runtime: Runtime, opts: { webDist?: string | null; l
   const readCache = new TtlCache<unknown>(1000, Date.now);
   const apiLimiter = pub ? new RateLimiter(PUBLIC_LIMITS.apiPerMinute, 60_000, Date.now) : null;
   const analyticsLimiter = pub ? new RateLimiter(PUBLIC_LIMITS.analyticsPerMinute, 60_000, Date.now) : null;
+  const computeLimiter = pub ? new RateLimiter(PUBLIC_LIMITS.computeMsPerMinute, 60_000, Date.now) : null;
   const analyticsDay = { day: -1, count: 0 };
   const streams = { total: 0, byClient: new Map<string, number>() };
 
   /**
    * Heavy reads run through the gate, one at a time between event-loop turns.
-   * With public hosting, results are shared for a few seconds per `key`.
+   * With public hosting, results are shared for a few seconds per `key`, which
+   * is built from validated parameters only (extra query text cannot bypass
+   * the cache), and each client's uncached work is metered.
    */
-  const heavyRead = async <T>(key: string, compute: () => T): Promise<T> => {
-    if (pub) {
+  const heavyRead = async <T>(req: FastifyRequest, key: string, compute: () => T, ttlMs: number = PUBLIC_LIMITS.readCacheMs): Promise<T> => {
+    if (computeLimiter) {
       const hit = readCache.get(key);
       if (hit !== undefined) return hit as T;
+      const retry = computeLimiter.blockedFor(req.ip);
+      if (retry !== null) throw new HttpError(429, "RATE_LIMITED", "Too many requests. Wait a moment and try again.", true, retry);
     }
-    const value = await gate.run(compute);
-    if (pub) readCache.set(key, value, PUBLIC_LIMITS.readCacheMs);
+    const value = await gate.run(() => {
+      const started = performance.now();
+      try {
+        return compute();
+      } finally {
+        computeLimiter?.hit(req.ip, performance.now() - started);
+      }
+    });
+    if (pub) readCache.set(key, value, ttlMs);
     return value;
   };
-  const queryKey = (req: FastifyRequest) => req.url;
 
   if (apiLimiter) {
     app.addHook("onRequest", async (req, reply) => {
@@ -90,6 +115,7 @@ export function buildServer(runtime: Runtime, opts: { webDist?: string | null; l
 
   app.setErrorHandler((err, req, reply) => {
     if (err instanceof HttpError) {
+      if (err.retryAfterSeconds !== null) void reply.header("Retry-After", String(err.retryAfterSeconds));
       void reply.status(err.status).send({ error: { code: err.code, message: err.message, retryable: err.retryable, requestId: req.id } } satisfies ApiError);
       return;
     }
@@ -169,7 +195,7 @@ export function buildServer(runtime: Runtime, opts: { webDist?: string | null; l
 
   app.get("/api/status", async (req) => {
     const { namespace, mode } = resolveNamespace(req);
-    return envelope(req, "status.v1", namespace, mode, await heavyRead(`status|${namespace}`, () => runtime.status(namespace)));
+    return envelope(req, "status.v1", namespace, mode, await heavyRead(req, `status|${namespace}`, () => runtime.status(namespace)));
   });
 
   const ListQuery = z.object({
@@ -208,7 +234,8 @@ export function buildServer(runtime: Runtime, opts: { webDist?: string | null; l
   app.get("/api/packs", async (req, reply) => {
     const { namespace, mode } = resolveNamespace(req);
     const { q, filters } = parseRadarQuery(req);
-    const { seq, data } = await heavyRead(queryKey(req), () => ({ seq: latestOutboxSequence(db), data: read.listPacks(namespace, filters, q.cursor ?? null, q.limit) }));
+    const key = `packs|${namespace}|${canonicalJson(filters)}|${q.cursor ?? ""}|${q.limit}`;
+    const { seq, data } = await heavyRead(req, key, () => ({ seq: latestOutboxSequence(db), data: read.listPacks(namespace, filters, q.cursor ?? null, q.limit) }));
     void reply.header("X-Outbox-Sequence", String(seq));
     return { ...envelope(req, "pack-list.v1", namespace, mode, data), sequence: seq };
   });
@@ -216,7 +243,9 @@ export function buildServer(runtime: Runtime, opts: { webDist?: string | null; l
   app.get("/api/overview", async (req) => {
     const { namespace, mode } = resolveNamespace(req);
     const { filters } = parseRadarQuery(req);
-    return envelope(req, "radar-overview.v1", namespace, mode, await heavyRead(queryKey(req), () => read.overview(namespace, filters)));
+    const ttl = filters.from === null && filters.to === null ? PUBLIC_LIMITS.overviewAllCacheMs : PUBLIC_LIMITS.overviewCacheMs;
+    const data = await heavyRead(req, `overview|${namespace}|${canonicalJson(filters)}`, () => read.overview(namespace, filters, runtime.detectionRule(namespace).minUniqueWallets), ttl);
+    return envelope(req, "radar-overview.v1", namespace, mode, data);
   });
 
   app.get("/api/packs/after", async (req) => {
@@ -224,14 +253,15 @@ export function buildServer(runtime: Runtime, opts: { webDist?: string | null; l
     const ids = raw.split(",").filter(Boolean);
     if (ids.length === 0 || ids.length > 50 || !ids.every((id) => /^[0-9a-f]{64}$/.test(id))) throw new HttpError(400, "INVALID_INPUT", "Provide 1 to 50 pack IDs.");
     const { namespace, mode } = resolveNamespace(req);
-    const data = await heavyRead(queryKey(req), () => ({ items: read.afterSummaries(ids), asOf: new Date(runtime.clock.now()).toISOString() }));
+    const key = `after|${namespace}|${[...new Set(ids)].sort().join(",")}`;
+    const data = await heavyRead(req, key, () => ({ items: read.afterSummaries(ids), asOf: new Date(runtime.clock.now()).toISOString() }));
     return envelope(req, "pack-after-summary.v1", namespace, mode, data);
   });
 
   app.get("/api/packs/:id", async (req, reply) => {
     const { id } = req.params as { id: string };
     if (!/^[0-9a-f]{64}$/.test(id)) throw new HttpError(400, "INVALID_INPUT", "Invalid pack ID.");
-    const { seq, detail } = await heavyRead(`pack|${id}`, () => ({ seq: latestOutboxSequence(db), detail: read.packDetail(id) }));
+    const { seq, detail } = await heavyRead(req, `pack|${id}`, () => ({ seq: latestOutboxSequence(db), detail: read.packDetail(id) }));
     if (!detail) throw new HttpError(404, "NOT_FOUND", "Pack not found.");
     const requested = (req.query as Record<string, unknown>).namespace;
     if (typeof requested === "string" && requested !== detail.core.namespace) throw new HttpError(404, "NOT_FOUND", "Pack not found in this namespace.");
@@ -243,7 +273,7 @@ export function buildServer(runtime: Runtime, opts: { webDist?: string | null; l
   app.get("/api/packs/:id/smart-money/evidence", async (req) => {
     const { id } = req.params as { id: string };
     if (!/^[0-9a-f]{64}$/.test(id)) throw new HttpError(400, "INVALID_INPUT", "Invalid pack ID.");
-    const data = await heavyRead(`pack-sm|${id}`, () => read.packSmartMoneyEvidence(id));
+    const data = await heavyRead(req, `pack-sm|${id}`, () => read.packSmartMoneyEvidence(id));
     if (!data) throw new HttpError(404, "NOT_FOUND", "Pack not found.");
     const p = db.prepare("SELECT namespace FROM packs WHERE id = ?").get(id) as { namespace: string };
     return envelope(req, "pack-smart-money-evidence.v1", p.namespace, read.namespaceMode(p.namespace)!, data);
@@ -256,7 +286,8 @@ export function buildServer(runtime: Runtime, opts: { webDist?: string | null; l
       .safeParse(req.query);
     if (!q.success) throw new HttpError(400, "INVALID_INPUT", "Choose active 24h, 7d, or all, minPacks of at least 2, and a limit up to 100.");
     const hours = q.data.active === "24h" ? 24 : q.data.active === "7d" ? 168 : null;
-    const data = await heavyRead(queryKey(req), () => read.repeatWallets(namespace, { activeWithinHours: hours, minPacks: q.data.minPacks, limit: q.data.limit }));
+    const key = `repeat|${namespace}|${hours ?? "all"}|${q.data.minPacks}|${q.data.limit}`;
+    const data = await heavyRead(req, key, () => read.repeatWallets(namespace, { activeWithinHours: hours, minPacks: q.data.minPacks, limit: q.data.limit }));
     return envelope(req, "repeat-wallets.v1", namespace, mode, data);
   });
 
@@ -265,7 +296,7 @@ export function buildServer(runtime: Runtime, opts: { webDist?: string | null; l
     if (chain !== "solana") throw new HttpError(400, "INVALID_INPUT", "Only Solana is supported.");
     if (!isSolanaAddress(address)) throw new HttpError(400, "INVALID_INPUT", "Invalid Solana wallet address.");
     const { namespace, mode } = resolveNamespace(req);
-    return envelope(req, "wallet.v1", namespace, mode, await heavyRead(queryKey(req), () => read.walletPage(namespace, address)));
+    return envelope(req, "wallet.v1", namespace, mode, await heavyRead(req, `wallet|${namespace}|${address}`, () => read.walletPage(namespace, address)));
   });
 
   app.get("/api/tokens/:chain/:address", async (req) => {
@@ -273,7 +304,7 @@ export function buildServer(runtime: Runtime, opts: { webDist?: string | null; l
     if (chain !== "solana") throw new HttpError(400, "INVALID_INPUT", "Only Solana is supported.");
     if (!isSolanaAddress(address)) throw new HttpError(400, "INVALID_INPUT", "Invalid Solana token address.");
     const { namespace, mode } = resolveNamespace(req);
-    return envelope(req, "token.v1", namespace, mode, await heavyRead(queryKey(req), () => read.tokenPage(namespace, address)));
+    return envelope(req, "token.v1", namespace, mode, await heavyRead(req, `token|${namespace}|${address}`, () => read.tokenPage(namespace, address)));
   });
 
   app.get("/api/tokens/:chain/:address/image", async (req, reply) => {
@@ -297,7 +328,7 @@ export function buildServer(runtime: Runtime, opts: { webDist?: string | null; l
     const { namespace, mode } = resolveNamespace(req);
     const q = (req.query as { q?: unknown }).q;
     if (typeof q !== "string" || q.length > 200) throw new HttpError(400, "INVALID_INPUT", "Provide a search text of at most 200 characters.");
-    return envelope(req, "search.v1", namespace, mode, await heavyRead(queryKey(req), () => read.search(namespace, q)));
+    return envelope(req, "search.v1", namespace, mode, await heavyRead(req, `search|${namespace}|${q}`, () => read.search(namespace, q)));
   });
 
   app.get("/api/smart-money/activity", async (req) => {
@@ -305,7 +336,7 @@ export function buildServer(runtime: Runtime, opts: { webDist?: string | null; l
     const q = req.query as { cursor?: string; token?: string; pumpfun?: string };
     if (q.token !== undefined && !isSolanaAddress(q.token)) throw new HttpError(400, "INVALID_INPUT", "Invalid token address.");
     if (q.pumpfun !== undefined && q.pumpfun !== "1" && q.pumpfun !== "0") throw new HttpError(400, "INVALID_INPUT", "pumpfun must be 1 or 0.");
-    return envelope(req, "smart-money-activity.v1", namespace, mode, await heavyRead(queryKey(req), () => read.smartMoneyActivity(namespace, q.cursor ?? null, q.token ?? null, 50, q.pumpfun === "1")));
+    return envelope(req, "smart-money-activity.v1", namespace, mode, await heavyRead(req, `sm|${namespace}|${q.cursor ?? ""}|${q.token ?? ""}|${q.pumpfun === "1" ? 1 : 0}`, () => read.smartMoneyActivity(namespace, q.cursor ?? null, q.token ?? null, 50, q.pumpfun === "1")));
   });
 
   app.get("/api/events", async (req, reply) => {
@@ -536,6 +567,7 @@ export function buildServer(runtime: Runtime, opts: { webDist?: string | null; l
   });
 
   if (opts.webDist && existsSync(opts.webDist)) {
+    const webDist = opts.webDist;
     // Files are resolved per request, so a rebuilt bundle is served without a restart.
     void app.register(fastifyStatic, {
       root: opts.webDist,
@@ -546,14 +578,33 @@ export function buildServer(runtime: Runtime, opts: { webDist?: string | null; l
         void reply.header("Cache-Control", path.includes("/assets/") ? "public, max-age=31536000, immutable" : "no-cache");
       },
     });
-    const sendIndex = (reply: FastifyReply) => reply.type("text/html").header("Cache-Control", "no-cache").sendFile("index.html", { maxAge: 0 });
-    app.get("/", (_req, reply) => sendIndex(reply));
+    // The page is filled per request (rule, deep-link title and preview) and read from disk each time, so a rebuilt bundle needs no restart.
+    const sendIndex = (req: FastifyRequest, reply: FastifyReply) => {
+      const url = new URL(req.url, "http://localhost");
+      const q = url.searchParams.get("namespace");
+      const namespace = q && q.length <= 200 && read.namespaceMode(q) ? q : runtime.primaryNamespace;
+      let template: string;
+      try {
+        template = readFileSync(join(webDist, "index.html"), "utf8");
+      } catch {
+        // A frontend swap moves the bundle for a moment.
+        return reply.status(503).header("Retry-After", "2").type("text/plain; charset=utf-8").send("The site is updating. Reload in a moment.");
+      }
+      let meta = null;
+      try {
+        meta = pageMeta(db, url.pathname, namespace, (ns) => runtime.detectionRule(ns));
+      } catch (err) {
+        log("warn", "api", "Page title lookup failed", { error: String(err) });
+      }
+      return reply.type("text/html; charset=utf-8").header("Cache-Control", "no-cache").send(renderIndex(template, runtime.detectionRule(namespace), meta));
+    };
+    app.get("/", (req, reply) => sendIndex(req, reply));
     app.setNotFoundHandler((req, reply) => {
       if (req.url.startsWith("/api/")) {
         void reply.status(404).send({ error: { code: "NOT_FOUND", message: "Route not found.", retryable: false, requestId: req.id } });
         return;
       }
-      void sendIndex(reply);
+      void sendIndex(req, reply);
     });
   }
 

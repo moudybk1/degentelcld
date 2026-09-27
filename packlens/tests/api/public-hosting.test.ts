@@ -67,6 +67,19 @@ describe("TtlCache and RateLimiter", () => {
     now = 60_000;
     expect(r.hit("x")).toBeNull();
   });
+
+  it("meters weighted work and reports a block without counting", () => {
+    let now = 0;
+    const r = new RateLimiter(1000, 60_000, () => now);
+    expect(r.blockedFor("x")).toBeNull();
+    expect(r.hit("x", 600)).toBeNull();
+    expect(r.blockedFor("x")).toBeNull();
+    r.hit("x", 400); // exactly at the limit: further work waits for the window
+    expect(r.blockedFor("x")).toBe(60);
+    expect(r.blockedFor("y")).toBeNull();
+    now = 60_000;
+    expect(r.blockedFor("x")).toBeNull();
+  });
 });
 
 describe("public hosting configuration", () => {
@@ -107,6 +120,18 @@ describe("public hosting limits", () => {
     const again = (await app.inject({ url: "/api/packs?limit=5", headers: { "x-forwarded-for": "192.0.2.2" } })).json();
     expect(again.data).toEqual(first.data);
     expect(again.requestId).not.toBe(first.requestId);
+  });
+
+  it("keys the shared cache on validated parameters, so extra query text cannot bypass it", async () => {
+    const first = (await app.inject({ url: "/api/packs?limit=7", headers: { "x-forwarded-for": "192.0.2.3" } })).json();
+    const top = first.data.items[0].core.id as string;
+    rt.db.prepare("UPDATE packs SET total_wallet_count = total_wallet_count + 1000 WHERE id = ?").run(top);
+    try {
+      const busted = (await app.inject({ url: "/api/packs?limit=7&x=1&namespace=" + encodeURIComponent(first.namespace), headers: { "x-forwarded-for": "192.0.2.4" } })).json();
+      expect(busted.data).toEqual(first.data); // served from the cache, not recomputed
+    } finally {
+      rt.db.prepare("UPDATE packs SET total_wallet_count = total_wallet_count - 1000 WHERE id = ?").run(top);
+    }
   });
 
   it("drops anonymous analytics writes past the per-client limit", async () => {

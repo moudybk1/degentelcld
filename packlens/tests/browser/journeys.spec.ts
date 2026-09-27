@@ -55,7 +55,7 @@ test("radar overview summarizes the range, ranks packs, and drills into an inter
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
   await page.goto("/");
-  const overview = page.getByRole("region", { name: "All time" });
+  const overview = page.getByRole("region", { name: "Last 24 hours" });
   await expect(overview.locator(".kpi.hero")).toContainText("5");
   await expect(overview.getByRole("region", { name: "Largest packs" })).toContainText("Lantern Moth");
   await expect(overview.getByRole("region", { name: "Packed repeatedly" })).toContainText("Salt Meridian");
@@ -179,16 +179,16 @@ test("operator: login required, session cookie, overview, logout", async ({ page
 test("radar rows and cards show what happened after each pack", async ({ page }) => {
   await page.goto("/");
   const row = page.getByRole("row", { name: /Lantern Moth/ });
-  await expect(row).toContainText("4 of 6");
+  await expect(row).toContainText("4/6 sold some");
   await expect(row.locator(".delta.down").first()).toBeVisible();
-  await expect(page.getByRole("row", { name: /Quiet Harbor/ })).toContainText("1 of 3");
+  await expect(page.getByRole("row", { name: /Quiet Harbor/ })).toContainText("1/3 sold some");
   // The card layout carries the same facts, and the choice is remembered.
   await page.getByRole("group", { name: "Layout" }).getByRole("button", { name: "Cards" }).click();
   const card = page.locator("article", { hasText: "Lantern Moth" });
   await expect(card).toContainText("After the pack");
-  await expect(card).toContainText("4 of 6 sold");
+  await expect(card).toContainText("4/6 sold some");
   await expect(card.locator(".delta.down").first()).toBeVisible();
-  await expect(page.locator("article", { hasText: "Quiet Harbor" })).toContainText("1 of 3 sold");
+  await expect(page.locator("article", { hasText: "Quiet Harbor" })).toContainText("1/3 sold some");
   await page.reload();
   await expect(page.locator("article")).toHaveCount(5);
   await page.getByRole("group", { name: "Layout" }).getByRole("button", { name: "Table" }).click();
@@ -205,7 +205,7 @@ test("pack page: plain-language reading, after-the-pack facts, chart, and earlie
   await reading.getByText("Read the full written summary").click();
   await expect(reading.getByRole("heading", { name: "What happened" })).toBeVisible();
   await expect(reading.getByRole("heading", { name: "Worth checking" })).toBeVisible();
-  await expect(reading).toContainText("4 of 6 pack wallets have sold");
+  await expect(reading).toContainText("4 of 6 pack wallets have sold some");
   await expect(reading).toContainText("not a forecast");
   await page.getByRole("navigation", { name: "Sections on this page" }).getByRole("link", { name: "After the pack" }).click();
   const after = page.getByRole("region", { name: "After the pack" });
@@ -219,7 +219,7 @@ test("pack page: plain-language reading, after-the-pack facts, chart, and earlie
   await after.getByText("Show the chart data as a table").click();
   await expect(after.locator(".chart-table tbody tr").first()).toBeVisible();
   await expect(after).toContainText("they do not predict what happens next");
-  await expect(after.getByText("All sold", { exact: true })).toHaveCount(4);
+  await expect(after.getByText("Sold all bought", { exact: true })).toHaveCount(4);
   await expect(page.getByRole("region", { name: "Earlier packs with these wallets" })).toContainText("No earlier packs with two or more of these wallets");
   // Salt Meridian's first pack shares two wallets with Lantern Moth.
   await page.goto("/");
@@ -234,7 +234,7 @@ test("pack page answers the key questions at a glance, each linked to its eviden
   await openPack(page, "Lantern Moth");
   const glance = page.getByRole("region", { name: "Pack at a glance" });
   await expect(glance.getByRole("link")).toHaveCount(6);
-  await expect(glance).toContainText("4 of 6 have sold");
+  await expect(glance).toContainText("4 of 6 sold some");
   await expect(glance).toContainText("2 of 6 pack wallets");
   await expect(glance).toContainText("Not in the observed data");
   await expect(glance).toContainText("not what the price will do next");
@@ -247,7 +247,7 @@ test("radar explains what a pack is, rows say whether the group sold, and the ex
   const how = page.getByRole("region", { name: "How Pack Radar works" });
   await expect(how).toContainText("3 or more different wallets");
   await expect(how).toContainText("not a buy signal");
-  await expect(page.getByRole("row", { name: /Lantern Moth/ })).toContainText("4 of 6 sold");
+  await expect(page.getByRole("row", { name: /Lantern Moth/ })).toContainText("4/6 sold some");
   await how.getByRole("button", { name: "Hide this guide suggestion" }).click();
   await expect(how).toHaveCount(0);
   await page.getByRole("button", { name: "How it works" }).click();
@@ -351,4 +351,27 @@ test("radar overview stays visible after it refreshes (scroll reveal never hides
   // Anything above the reader counts as seen, even after a jump to the bottom.
   await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
   await expect(page.locator("[data-reveal='pending']")).toHaveCount(0);
+});
+
+test("a newcomer reaches the feed or an analyzed example from the first phone screen", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  const toFeed = page.getByRole("link", { name: /View packs/ });
+  const example = page.getByRole("link", { name: /Explore an example/ });
+  await expect(example).toBeVisible();
+  for (const l of [toFeed, example]) expect((await l.boundingBox())!.y + 40).toBeLessThan(844);
+  await toFeed.click();
+  await expect.poll(async () => (await page.locator("#radar-list").boundingBox())!.y).toBeLessThan(300);
+  // Quick views are plain filters that say what they keep.
+  const quick = page.getByRole("group", { name: "Quick views" });
+  await quick.getByRole("button", { name: "Larger buys · $1,000+" }).click();
+  await expect(quick.getByRole("button", { name: "Larger buys · $1,000+" })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByLabel("Min. total pack USD")).toHaveValue("1000");
+  await quick.getByRole("button", { name: "All packs" }).click();
+  await expect(page.getByLabel("Min. total pack USD")).toHaveValue("");
+  // The example is a pack with complete Nansen analysis, and its page can be shared.
+  await page.goto("/");
+  await page.getByRole("link", { name: /Explore an example/ }).click();
+  await expect(page.getByRole("button", { name: "Copy pack link" })).toBeVisible();
+  await expect(page).toHaveTitle(/pack · \d+ wallets · .* · Degentellegence$/);
 });

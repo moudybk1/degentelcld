@@ -4,7 +4,7 @@ import { ArrowLeft, PushPin, Play } from "@phosphor-icons/react";
 import type { PackDetail } from "@packlens/contracts";
 import { apiPost, apiRaw, ApiError, track } from "../api/client";
 import { useEventListener } from "../api/events";
-import { useApi, useNow } from "../api/hooks";
+import { useApi, useDocumentTitle, useNow } from "../api/hooks";
 import { Timeline } from "../components/Timeline";
 import { SmartMoneySection } from "../components/SmartMoneyPanel";
 import { HoldersCard, TokenInfoCard, WalletProfileCard } from "../components/ContextPanels";
@@ -13,7 +13,7 @@ import { PackGlance } from "../components/PackGlance";
 import { packLead } from "../lib/packFacts";
 import { ruleUsd, useRule } from "../lib/rule";
 import { InfoTip } from "../components/InfoTip";
-import { Address, Empty, ErrorNote, ExtLink, KV, LoadingBlock, ModeBadge, Note, Reveal, Stat, Tag, TokenAvatar, TradeLink, useRowLimit, type FromState } from "../components/ui";
+import { Address, Empty, ErrorNote, ExtLink, KV, LoadingBlock, ModeBadge, Note, Reveal, ShareLink, Stat, Tag, TokenAvatar, TradeLink, useRowLimit, type FromState } from "../components/ui";
 import { dateTimeUtc, pct, rawAmount, relative, seconds, timeUtc, titleCase, usd } from "../lib/format";
 import { analysisLabel, matchLabel, REVIEW_FLAG_TEXT } from "../lib/labels";
 import { nansenTokenUrl, tokenUrl, txUrl } from "../lib/explorer";
@@ -100,6 +100,7 @@ export function PackDetailPage() {
   const now = useNow(5000);
   const rule = useRule();
   const { data, meta, error, loading, reload } = useApi<PackDetail>(`/api/packs/${id}`);
+  useDocumentTitle(data ? `${data.token.symbol || data.token.name || "Token"} pack · ${data.core.totalWalletCount} wallets · ${dateTimeUtc(data.core.triggerEventTimeMs)} · Degentellegence` : null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const memberRows = useRowLimit(data?.members ?? [], 25);
   const evidenceRows = useRowLimit(data?.evidence ?? [], 25);
@@ -218,6 +219,7 @@ export function PackDetailPage() {
             Triggered {dateTimeUtc(d.core.triggerEventTimeMs)} · {relative(d.core.triggerEventTimeMs, now)}
           </span>
           <span>Source: pump.fun</span>
+          <ShareLink label="Copy pack link" />
           {!synthetic && <TradeLink href={nansenTokenUrl(d.core.tokenAddress)} />}
         </div>
         {d.token.identitySource && (

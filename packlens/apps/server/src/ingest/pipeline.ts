@@ -47,6 +47,10 @@ export function eventContentHash(e: TradeEvent): string {
  * E <= W is late and excluded from live detection. Each tick drains admitted
  * events with E <= newW in (E, slot, signature, ordinal) order, then timers.
  */
+/** Admitted events the detector has not applied yet, through the partial index that holds exactly them. */
+export const PENDING_SQL =
+  "SELECT payload_json FROM trade_events INDEXED BY trade_events_pending WHERE namespace = ? AND admission = 'admitted' AND detector_applied = 0";
+
 export class IngestPipeline {
   private watermarkMs: number | null;
   private pending: TradeEvent[] = [];
@@ -79,10 +83,15 @@ export class IngestPipeline {
     this.restorePending();
   }
 
-  /** Restore admitted-but-unapplied events with their original admission (§17.13). */
+  /**
+   * Restore admitted-but-unapplied events with their original admission (§17.13).
+   * Without statistics SQLite planned this on another (namespace, …) index and read
+   * every stored trade of the namespace (measured on the live VPS 2026-09-27: 8.6 GB
+   * and 2 min 45 s before the server listened), so the partial pending index is named.
+   */
   private restorePending(): void {
     const rows = this.db
-      .prepare("SELECT payload_json FROM trade_events WHERE namespace = ? AND admission = 'admitted' AND detector_applied = 0")
+      .prepare(PENDING_SQL)
       .all(this.namespace) as { payload_json: string }[];
     this.pending = rows.map((r) => JSON.parse(r.payload_json) as TradeEvent);
   }

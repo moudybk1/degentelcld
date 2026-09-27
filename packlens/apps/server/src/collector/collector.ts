@@ -15,10 +15,32 @@ export type RawTransaction = {
 
 export type CollectorHealthState = "connecting" | "connected" | "disconnected";
 
+/** Consecutive connections that deliver no notification before the next endpoint is tried. */
+export const FAILOVER_AFTER_FAILURES = 3;
+/** Time on a fallback endpoint before the next reconnect tries the primary again. */
+export const RETRY_PRIMARY_AFTER_MS = 30 * 60_000;
+/** A connection that has not confirmed its subscription by now is abandoned. */
+const CONNECT_TIMEOUT_MS = 30_000;
+
+/** Host only: keyed RPC URLs carry their credential in the query string. */
+function endpointLabel(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return "[invalid url]";
+  }
+}
+
 /**
  * pump.fun collector over Solana logsSubscribe (commitment: confirmed).
  * Reconnects with jittered backoff (1s → 30s), records gaps, and treats a
- * silent stream as disconnected. The RPC URL is never logged with credentials.
+ * silent stream (or a subscription that never confirms) as disconnected.
+ *
+ * With a fallback endpoint, three connections in a row that deliver no
+ * notification (refused, never confirmed, or confirmed and then silent or closed)
+ * switch to the next endpoint, so a keyed RPC that runs out of credits does not stop
+ * detection; after 30 minutes on a fallback, the next reconnect tries the primary
+ * again. The RPC URL is never logged with credentials.
  */
 export class PumpCollector {
   private ws: WebSocket | null = null;
@@ -28,6 +50,12 @@ export class PumpCollector {
   private watchdog: NodeJS.Timeout | null = null;
   private pingTimer: NodeJS.Timeout | null = null;
   private openGapId: string | null = null;
+  private readonly wsUrls: string[];
+  private urlIndex = 0;
+  private failuresInRow = 0;
+  private onFallbackSinceMs: number | null = null;
+  private connectingSinceMs = 0;
+  private notificationsThisConnection = 0;
   health: CollectorHealthState = "disconnected";
   lastMessageAtMs: number | null = null;
   connectedSinceMs: number | null = null;
@@ -36,13 +64,21 @@ export class PumpCollector {
   failedTransactions = 0;
 
   constructor(
-    private readonly wsUrl: string,
+    wsUrls: string | string[],
     private readonly clock: Clock,
     private readonly db: Db,
     private readonly namespace: string,
     private readonly onTransaction: (tx: RawTransaction) => void,
     private readonly onStatusChange: () => void = () => {},
-  ) {}
+  ) {
+    this.wsUrls = (Array.isArray(wsUrls) ? wsUrls : [wsUrls]).filter((u, i, all) => u && all.indexOf(u) === i);
+    if (this.wsUrls.length === 0) throw new Error("PumpCollector needs a WebSocket URL");
+  }
+
+  /** "primary" or "fallback": which endpoint the collector is using. */
+  get endpoint(): "primary" | "fallback" {
+    return this.urlIndex === 0 ? "primary" : "fallback";
+  }
 
   start(): void {
     this.stopped = false;
@@ -92,8 +128,13 @@ export class PumpCollector {
 
   private connect(): void {
     if (this.stopped) return;
+    if (this.urlIndex !== 0 && this.onFallbackSinceMs !== null && this.clock.now() - this.onFallbackSinceMs >= RETRY_PRIMARY_AFTER_MS) {
+      this.useEndpoint(0, "retrying the primary");
+    }
     this.setHealth("connecting");
-    const ws = new WebSocket(this.wsUrl, { handshakeTimeout: 15_000 });
+    this.connectingSinceMs = this.clock.now();
+    this.notificationsThisConnection = 0;
+    const ws = new WebSocket(this.wsUrls[this.urlIndex]!, { handshakeTimeout: 15_000 });
     this.ws = ws;
     ws.on("open", () => {
       ws.send(JSON.stringify({ jsonrpc: "2.0", id: 1, method: "logsSubscribe", params: [{ mentions: [PUMP_PROGRAM_ID] }, { commitment: "confirmed" }] }));
@@ -112,6 +153,9 @@ export class PumpCollector {
       if (this.health === "connected" && this.clock.now() - last > 30_000) {
         log("warn", "collector", "Stream silent for 30 seconds; reconnecting");
         ws.terminate();
+      } else if (this.health === "connecting" && this.clock.now() - this.connectingSinceMs > CONNECT_TIMEOUT_MS) {
+        log("warn", "collector", "Subscription not confirmed within 30 seconds; reconnecting");
+        ws.terminate();
       }
     }, 5000);
     this.watchdog.unref?.();
@@ -122,11 +166,24 @@ export class PumpCollector {
     this.pingTimer.unref?.();
   }
 
+  private useEndpoint(index: number, why: string): void {
+    this.urlIndex = index;
+    this.failuresInRow = 0;
+    this.backoffMs = 1000;
+    this.onFallbackSinceMs = index === 0 ? null : this.clock.now();
+    log("warn", "collector", `Using the ${index === 0 ? "primary" : "fallback"} RPC endpoint (${why})`, { endpoint: endpointLabel(this.wsUrls[index]!) });
+  }
+
   private scheduleReconnect(reason: string): void {
     if (this.stopped) return;
     if (this.ws) {
       this.ws.removeAllListeners();
       this.ws = null;
+    }
+    // A connection that delivered no notification counts against this endpoint (pump.fun sends many per second).
+    if (this.notificationsThisConnection === 0) this.failuresInRow++;
+    if (this.wsUrls.length > 1 && this.failuresInRow >= FAILOVER_AFTER_FAILURES) {
+      this.useEndpoint((this.urlIndex + 1) % this.wsUrls.length, `${this.failuresInRow} connects in a row failed`);
     }
     this.openGap(reason);
     this.setHealth("disconnected");
@@ -166,6 +223,7 @@ export class PumpCollector {
     if (!value || typeof value.signature !== "string" || typeof slot !== "number" || !Array.isArray(value.logs)) return;
     this.lastMessageAtMs = receivedAtMs;
     this.notifications++;
+    if (this.notificationsThisConnection++ === 0) this.failuresInRow = 0;
     if (value.err !== null && value.err !== undefined) {
       // Failed transactions never enter the detector (FR-01).
       this.failedTransactions++;

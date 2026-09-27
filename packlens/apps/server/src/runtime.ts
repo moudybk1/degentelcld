@@ -275,7 +275,8 @@ export class Runtime {
       }
     };
     this.handleTransaction = onTransaction;
-    const collector = cfg.rpc.wsUrl && this.startCollector ? new PumpCollector(cfg.rpc.wsUrl, clock, db, ns, onTransaction) : null;
+    const wsUrls = [cfg.rpc.wsUrl, cfg.rpc.wsFallbackUrl].filter((u): u is string => u !== null);
+    const collector = cfg.rpc.wsUrl && this.startCollector ? new PumpCollector(wsUrls, clock, db, ns, onTransaction) : null;
     // Display-only logos for packed tokens; off whenever the collector is (tests stay off the network).
     this.tokenImages = this.startCollector ? new TokenImageResolver(db, clock, ns) : null;
 

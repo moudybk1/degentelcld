@@ -28,7 +28,7 @@ export function HowItWorks({ onDismiss }: { onDismiss: () => void }) {
           <strong>Wallets buy together</strong>
           <span>
             A <em>pack</em> forms when {rule.minUniqueWallets} or more different wallets each buy at least {ruleUsd(rule)} of the same pump.fun token within {rule.triggerWindowSeconds} seconds.
-            Wallets that buy in the next {rule.expansionSeconds} seconds join it.{rule.isBaseline ? "" : " This site runs a custom rule; the spec baseline is 3 wallets and $20."}
+            Wallets that buy until {rule.expansionSeconds} seconds after the first buy join it.{rule.isBaseline ? "" : " This site runs a custom rule; the spec baseline is 3 wallets and $20."}
           </span>
         </li>
         <li>

@@ -525,9 +525,25 @@ export type EarlierPack = {
   sharedWallets: number;
   totalWalletCount: number;
   eligibleBuyUsd: string;
-  /** Outcome in the 15 minutes after that pack formed, from observed trades (null if not observed). */
+  /**
+   * complete: the 15 minutes after that pack have passed and were fully observed.
+   * observing: they have not passed yet; only the "so far" values are set.
+   * partial: they passed, but a collector gap, the token leaving the bonding curve,
+   * or the end of the recorded data cut observation short (see outcomeNote).
+   * Absent from older servers.
+   */
+  outcomeState?: "complete" | "observing" | "partial";
+  outcomeNote?: "gap" | "graduated" | "data_ended" | null;
+  /** How much of the 15 minutes has been observed. */
+  observedMs?: number;
+  /** Time of the trade that gives the price at the cutoff: the last observed trade at or before 15:00 after the pack formed. */
+  priceAtMs?: number | null;
+  /** Outcome over the 15 minutes after that pack formed, from observed trades; null while observing or if no trade was observed. */
   peakChangePct15m: number | null;
   changePct15m: number | null;
+  /** While observing: the highest and latest change so far. */
+  peakSoFarPct?: number | null;
+  changeSoFarPct?: number | null;
 };
 
 export type ReadoutItem = {
@@ -622,6 +638,11 @@ export type OverviewData = {
     /** Tokens with more than one pack in the range, most packs first. */
     repeatTokens: OverviewToken[];
   };
+  /**
+   * A pack worth opening first: the newest one with complete Nansen analysis, preferring one at least
+   * 15 minutes old (so what happened after it is known). Absent from older servers.
+   */
+  example?: OverviewPack | null;
   filters: RadarFilters;
 };
 

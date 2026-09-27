@@ -1,7 +1,7 @@
 import { Link, useLocation, useParams } from "react-router";
 import type { TokenPageData } from "@packlens/contracts";
 import { useEventListener } from "../api/events";
-import { useApi, useNow } from "../api/hooks";
+import { useApi, useDocumentTitle, useNow } from "../api/hooks";
 import { HoldersCard, TokenInfoCard } from "../components/ContextPanels";
 import { PackCard } from "../components/PackCard";
 import { SmartMoneySection } from "../components/SmartMoneyPanel";
@@ -15,6 +15,7 @@ export function TokenPage() {
   const href = useNsHref();
   const now = useNow(5000);
   const { data, meta, error, loading, reload } = useApi<TokenPageData>(`/api/tokens/solana/${mint}`);
+  useDocumentTitle(data ? `${data.token.symbol || data.token.name || shortAddr(mint)} on pump.fun · Degentellegence` : null);
   useEventListener(
     (msg) => {
       if (msg.type === "resync_required" || (msg.payload as { mint?: string }).mint === mint) reload();

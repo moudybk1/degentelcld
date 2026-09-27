@@ -61,8 +61,8 @@ function answers(d: PackDetail): Answer[] {
     const first = m.firstSellAt ? ` First sale ${duration(Date.parse(m.firstSellAt) - d.core.firstEventTimeMs)} after the first pack buy.` : "";
     out.push({
       q: "Are the pack wallets still holding?",
-      a: m.sold >= m.count ? `All ${m.count} have sold` : `${m.sold} of ${m.count} have sold`,
-      detail: `${share === null ? "" : `${share}% of the tokens they bought is sold.`}${first}`,
+      a: `${m.sold} of ${m.count} sold some`,
+      detail: `${share === null ? "" : `${share}% of the tokens they bought here is sold; ${m.exited} of ${m.count} sold everything they bought here.`}${first}`,
       tone: m.sold >= m.count || (share ?? 0) >= 50 ? "attention" : "neutral",
       section: "sec-after",
     });
@@ -93,12 +93,18 @@ function answers(d: PackDetail): Answer[] {
   if (earlier.length === 0) {
     out.push({ q: "Has this group done it before?", a: "Not in the observed data", detail: "No earlier pack shares two or more of these wallets.", tone: "neutral", section: "sec-earlier" });
   } else {
-    const known = earlier.filter((e) => e.changePct15m !== null);
-    const up = known.filter((e) => (e.changePct15m ?? 0) > 0).length;
+    // Only completed, fully observed 15-minute windows count (older servers send no state: their values are all counted).
+    const done = earlier.filter((e) => (e.outcomeState ?? "complete") === "complete" && e.changePct15m !== null);
+    const up = done.filter((e) => (e.changePct15m ?? 0) > 0).length;
+    const rest = earlier.length - done.length;
+    const restText = rest > 0 ? ` ${rest} more ${rest === 1 ? "is" : "are"} still inside ${rest === 1 ? "its" : "their"} 15 minutes or only partly observed, and not counted.` : "";
     out.push({
       q: "Has this group done it before?",
       a: `Yes, ${earlier.length >= 10 ? "10+" : earlier.length} earlier ${earlier.length === 1 ? "pack" : "packs"}`,
-      detail: known.length > 0 ? `15 minutes after those packs, ${up} of ${known.length} tokens were above the pack's entry. History, not a forecast.` : "What happened in the 15 minutes after them was not observed.",
+      detail:
+        done.length > 0
+          ? `Of ${done.length} earlier ${done.length === 1 ? "pack" : "packs"} with 15 complete, observed minutes after ${done.length === 1 ? "it" : "them"}, ${up} ended above ${done.length === 1 ? "its" : "their"} own entry price.${restText} History, not a forecast.`
+          : `None has 15 complete, observed minutes after it yet.${restText}`,
       tone: "attention",
       section: "sec-earlier",
     });

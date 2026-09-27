@@ -78,6 +78,14 @@ describe("radar overview (fixture)", () => {
     expect((await app.inject({ url: "/api/overview?namespace=live:nope" })).statusCode).toBe(404);
   });
 
+  it("starts the size bands at the smallest possible pack", async () => {
+    expect((await overview()).sizeBands.map((b) => b.label)).toEqual(["3", "4 to 5", "6 to 9", "10 to 19", "20 to 49", "50+"]);
+    const five = await overview("?minWallets=5");
+    expect(five.sizeBands.map((b) => b.label)).toEqual(["5", "6 to 9", "10 to 19", "20 to 49", "50+"]);
+    expect(five.sizeBands.reduce((a, b) => a + b.packs, 0)).toBe(five.totals.packs);
+    expect((await overview("?minWallets=60")).sizeBands.map((b) => b.label)).toEqual(["60+"]);
+  });
+
   it("ranks packs and repeated tokens from stored columns", async () => {
     const o = await overview();
     const w = o.top.byWallets.map((p) => p.totalWalletCount);

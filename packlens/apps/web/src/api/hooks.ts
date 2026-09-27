@@ -75,3 +75,15 @@ export function useNow(intervalMs = 5000): number {
   }, [intervalMs]);
   return now;
 }
+
+const DEFAULT_TITLE = "Degentellegence · Pack Radar";
+
+/** The browser tab title for this page; restores the site title when the page closes. */
+export function useDocumentTitle(title: string | null): void {
+  useEffect(() => {
+    if (title) document.title = title;
+    return () => {
+      document.title = DEFAULT_TITLE;
+    };
+  }, [title]);
+}

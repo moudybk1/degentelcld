@@ -1,6 +1,6 @@
 # PackLens database schema
 
-Generated from `migrations/` (0001_init.sql, 0002_price_policy.sql, 0003_token_lifecycle.sql, 0004_query_indexes.sql, 0005_token_images.sql, 0006_pyth_price.sql, 0007_wallet_pack_stats.sql) by `npm run db:schema-doc`. Do not edit by hand.
+Generated from `migrations/` (0001_init.sql, 0002_price_policy.sql, 0003_token_lifecycle.sql, 0004_query_indexes.sql, 0005_token_images.sql, 0006_pyth_price.sql, 0007_wallet_pack_stats.sql, 0008_member_time_index.sql, 0009_outbox_created_index.sql) by `npm run db:schema-doc`. Do not edit by hand.
 
 SQLite runs in WAL mode with foreign keys enabled on every connection. Namespaces (`live:`, `fixture:`, `replay:`) isolate data; composite foreign keys keep references inside one namespace.
 
@@ -172,7 +172,7 @@ Indexes: `enrichment_by_params`, `enrichment_by_subject`
 
 Foreign keys: (namespace) → `namespaces`(id)
 
-Indexes: `outbox_namespace_sequence`
+Indexes: `event_outbox_created`, `outbox_namespace_sequence`
 
 ## `idempotency_keys`
 
@@ -326,7 +326,7 @@ Indexes: `pack_events_event`
 
 Foreign keys: (pack_id, namespace) → `packs`(id, namespace)
 
-Indexes: `pack_members_wallet`
+Indexes: `pack_members_wallet_time`, `pack_members_wallet`
 
 ## `pack_smart_money_contexts`
 

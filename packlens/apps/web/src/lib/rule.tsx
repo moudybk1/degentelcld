@@ -11,7 +11,24 @@ export const BASELINE_RULE: DetectionRule = {
   isBaseline: true,
 };
 
-const RuleContext = createContext<DetectionRule>(BASELINE_RULE);
+/**
+ * The rule the server wrote into the page (meta degentel-rule), so the first paint already
+ * shows the deployed rule instead of the baseline. Absent in the Vite dev server.
+ */
+function servedRule(): DetectionRule | null {
+  try {
+    const content = document.querySelector('meta[name="degentel-rule"]')?.getAttribute("content");
+    const r = content ? (JSON.parse(content) as DetectionRule) : null;
+    return r && typeof r.minUniqueWallets === "number" && typeof r.minTradeUsd === "string" ? r : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The rule to show before the status arrives. */
+export const INITIAL_RULE: DetectionRule = servedRule() ?? BASELINE_RULE;
+
+const RuleContext = createContext<DetectionRule>(INITIAL_RULE);
 
 export const RuleProvider = RuleContext.Provider;
 
@@ -37,5 +54,6 @@ export function ruleText(text: string, rule: DetectionRule): string {
 /** One sentence naming the rule, marking a non-baseline rule as custom. */
 export function ruleSentence(rule: DetectionRule): string {
   const base = `at least ${rule.minUniqueWallets} unique wallets, ${ruleUsd(rule)} per eligible buy, within ${rule.triggerWindowSeconds} seconds`;
-  return rule.isBaseline ? base : `${base} (custom rule ${rule.version}; the spec baseline is 3 wallets and $20)`;
+  // The internal version name stays in technical details.
+  return rule.isBaseline ? base : `${base} (a custom rule; the spec baseline is 3 wallets and $20)`;
 }

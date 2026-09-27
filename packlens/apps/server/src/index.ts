@@ -19,6 +19,7 @@ async function main(): Promise<void> {
     mode: config.mode,
     database: config.databasePath,
     rpc: redactUrl(config.rpc.wsUrl),
+    rpcFallback: redactUrl(config.rpc.wsFallbackUrl),
     smartMoneyEnabled: config.smartMoney.enabled,
     budgetCredits: config.nansen.budgetCredits,
     sessionEndAt: config.nansen.sessionEndAtMs ? new Date(config.nansen.sessionEndAtMs).toISOString() : null,

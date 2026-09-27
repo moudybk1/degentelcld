@@ -6,7 +6,7 @@ import { useApi } from "./api/hooks";
 import { TopBar } from "./components/TopBar";
 import { useScrollReveal } from "./components/motion";
 import { useNamespace, useNsHref } from "./state/namespace";
-import { BASELINE_RULE, RuleProvider, ruleSentence } from "./lib/rule";
+import { INITIAL_RULE, RuleProvider, ruleSentence } from "./lib/rule";
 import { RadarPage } from "./pages/RadarPage";
 import { PackDetailPage } from "./pages/PackDetailPage";
 import { WalletPage } from "./pages/WalletPage";
@@ -58,7 +58,7 @@ function Shell() {
     return () => clearInterval(t);
   }, [status.reload]);
   useScrollReveal(pathname);
-  const rule = status.data?.detector ?? BASELINE_RULE;
+  const rule = status.data?.detector ?? INITIAL_RULE;
   return (
     <RuleProvider value={rule}>
     <EventsProvider namespace={namespace}>

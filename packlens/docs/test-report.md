@@ -1,5 +1,7 @@
 # Test report
 
+> **Update 2026-09-27 (pre-launch):** `npm run typecheck` and `npm run lint` pass; `npm test` passes **243 tests** in 30 files (new: RPC failover for the collector and Pyth reads, pending events restored through their partial index, retention scan floor and batched outbox cleanup, cache keys built from validated parameters, per-client read budget, size bands from the detection rule, token text masking); `npm run test:e2e` passes **23 browser journeys**. The sections below are the original 2026-09-25 report.
+
 Date: 2026-09-25 · Runtime: Node 24.19.0, npm 11.17.0, SQLite 3.53.4 (better-sqlite3 13.0.3) · Linux.
 All figures below come from commands actually run on this date. Offline and live results are reported separately.
 

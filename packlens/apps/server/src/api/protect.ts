@@ -10,7 +10,8 @@
  *   (503) instead of queueing without bound.
  * - TtlCache keeps recent read results for a few seconds, so a popular page is
  *   computed once, not once per viewer.
- * - RateLimiter bounds requests per client.
+ * - RateLimiter bounds requests per client and, weighted by milliseconds, the
+ *   uncached read work one client can cause.
  */
 
 export class BusyError extends Error {
@@ -87,7 +88,7 @@ export class TtlCache<T> {
   }
 }
 
-/** Fixed-window counter per key; windows reset every `windowMs`. */
+/** Fixed-window counter per key; windows reset every `windowMs`. Hits may carry a weight (for example milliseconds of work). */
 export class RateLimiter {
   private readonly hits = new Map<string, { windowStart: number; count: number }>();
 
@@ -98,8 +99,8 @@ export class RateLimiter {
     private readonly maxKeys = 100_000,
   ) {}
 
-  /** Count one hit; returns null when allowed, or the seconds until the window resets. */
-  hit(key: string): number | null {
+  /** Count one hit of `weight`; returns null when allowed, or the seconds until the window resets. */
+  hit(key: string, weight = 1): number | null {
     const now = this.now();
     let h = this.hits.get(key);
     if (!h || now - h.windowStart >= this.windowMs) {
@@ -107,8 +108,20 @@ export class RateLimiter {
       h = { windowStart: now, count: 0 };
       this.hits.set(key, h);
     }
-    h.count++;
+    h.count += weight;
     if (h.count <= this.limit) return null;
+    return this.secondsLeft(h, now);
+  }
+
+  /** Without counting: null when `key` is below its limit, else the seconds until the window resets. */
+  blockedFor(key: string): number | null {
+    const now = this.now();
+    const h = this.hits.get(key);
+    if (!h || now - h.windowStart >= this.windowMs || h.count < this.limit) return null;
+    return this.secondsLeft(h, now);
+  }
+
+  private secondsLeft(h: { windowStart: number }, now: number): number {
     return Math.max(1, Math.ceil((h.windowStart + this.windowMs - now) / 1000));
   }
 

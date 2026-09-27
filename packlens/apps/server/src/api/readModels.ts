@@ -286,7 +286,8 @@ export class ReadModels {
    * observed its first event, and collector gaps, are reported rather than
    * shown as zero activity.
    */
-  overview(namespace: string, filters: RadarFilters): OverviewData {
+  /** `ruleMinWallets`: the smallest pack the namespace's detection rule allows; size bands start there. */
+  overview(namespace: string, filters: RadarFilters, ruleMinWallets = 3): OverviewData {
     const mode = this.namespaceMode(namespace);
     const newest = this.db.prepare("SELECT MAX(triggered_at_ms) AS t FROM packs WHERE namespace = ?").get(namespace) as { t: number | null };
     const asOf = Math.max(this.clock.now(), newest.t ?? 0);
@@ -343,14 +344,22 @@ export class ReadModels {
       const mid = Math.floor(s.length / 2);
       return s.length % 2 ? s[mid]! : (s[mid - 1]! + s[mid]!) / 2;
     };
-    const bands = [
-      { label: "3", min: 3, max: 3 },
-      { label: "4 to 5", min: 4, max: 5 },
-      { label: "6 to 9", min: 6, max: 9 },
-      { label: "10 to 19", min: 10, max: 19 },
-      { label: "20 to 49", min: 20, max: 49 },
-      { label: "50+", min: 50, max: null },
-    ].map((b) => ({ ...b, packs: rows.filter((r) => r.w >= b.min && (b.max === null || r.w <= b.max)).length }));
+    // Bands below the smallest possible pack (rule or filter) would always be empty: drop them and start the first band there.
+    const floor = Math.max(ruleMinWallets, filters.minWallets);
+    const bandLabel = (min: number, max: number | null) => (max === null ? `${min}+` : min === max ? `${min}` : `${min} to ${max}`);
+    const bands = (
+      [
+        [3, 3],
+        [4, 5],
+        [6, 9],
+        [10, 19],
+        [20, 49],
+        [50, null],
+      ] as [number, number | null][]
+    )
+      .filter(([, max]) => max === null || max >= floor)
+      .map(([min, max]) => ({ min: Math.max(min, floor), max }))
+      .map((b) => ({ label: bandLabel(b.min, b.max), ...b, packs: rows.filter((r) => r.w >= b.min && (b.max === null || r.w <= b.max)).length }));
 
     const toOverviewPack = (r: (typeof rows)[number]): OverviewPack => ({
       id: r.id,
@@ -393,6 +402,7 @@ export class ReadModels {
       asOf: new Date(asOf).toISOString(),
       range,
       coverageStartMs,
+      example: this.examplePack(namespace, asOf),
       totals: {
         packs: rows.length,
         tokens: perMint.size,
@@ -409,6 +419,37 @@ export class ReadModels {
       gaps,
       top: { byWallets, byUsd, repeatTokens },
       filters,
+    };
+  }
+
+  /**
+   * The newest pack with complete Nansen analysis, preferring one at least 15 minutes old; null when
+   * none was analyzed in the last day. Walks packs newest first through their time index (scanning
+   * every assessment took 0.7 s on the live database).
+   */
+  private examplePack(namespace: string, asOfMs: number): OverviewPack | null {
+    const pick = this.db.prepare(
+      `SELECT p.id, p.mint, p.trigger_event_time_ms AS t, p.total_wallet_count AS w, p.eligible_buy_usd AS usd,
+              json_extract(p.patterns_json, '$.initialEntrySpanMs') AS span, json_extract(p.patterns_json, '$.cooccurrencePairCount') AS pairs
+         FROM packs p
+        WHERE p.namespace = ? AND p.trigger_event_time_ms <= ? AND p.trigger_event_time_ms >= ? AND p.invalidated = 0
+          AND EXISTS (SELECT 1 FROM pack_assessments pa WHERE pa.pack_id = p.id AND pa.analysis_state = 'complete')
+        ORDER BY p.trigger_event_time_ms DESC LIMIT 1`,
+    );
+    type Row = { id: string; mint: string; t: number; w: number; usd: string; span: number | null; pairs: number | null };
+    // Historical data (fixture, replay) ends at its last pack, so the day is counted back from there.
+    const newest = (this.db.prepare("SELECT MAX(trigger_event_time_ms) AS t FROM packs WHERE namespace = ?").get(namespace) as { t: number | null }).t ?? asOfMs;
+    const since = Math.min(asOfMs, newest) - 24 * 60 * 60_000;
+    const r = (pick.get(namespace, asOfMs - 15 * 60_000, since) ?? pick.get(namespace, asOfMs, since)) as Row | undefined;
+    if (!r) return null;
+    return {
+      id: r.id,
+      token: this.tokenIdentity(namespace, r.mint),
+      triggerEventTimeMs: r.t,
+      totalWalletCount: r.w,
+      eligibleBuyUsd: canonicalString(r.usd),
+      initialEntrySpanMs: r.span,
+      cooccurrencePairCount: r.pairs ?? 0,
     };
   }
 
@@ -581,8 +622,9 @@ export class ReadModels {
     history.sort((a, b) => a.at.localeCompare(b.at));
 
     const summary = `${packSentence(core, patterns)} ${smartMoneySentence(windows.windows[1], packConfirmation)}`;
-    const after = afterDetail(this.db, r, members, evRows.map((e) => e.event_id), this.clock.now());
-    const earlier = earlierPacks(this.db, r, members.map((m) => m.walletAddress));
+    const nowMs = this.clock.now();
+    const after = afterDetail(this.db, r, members, evRows.map((e) => e.event_id), nowMs);
+    const earlier = earlierPacks(this.db, r, members.map((m) => m.walletAddress), nowMs);
     const coverage: PackDetail["coverage"] = {
       source: "pumpfun",
       commitment: "confirmed",

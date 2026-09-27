@@ -86,6 +86,8 @@ export class PythPriceFeed implements QuotePriceFeed {
   lastError: string | null = null;
   lastSuccessAtMs: number | null = null;
   polls = 0;
+  /** True while reads succeed only through SOLANA_RPC_HTTP_FALLBACK_URL. */
+  usingFallback = false;
 
   constructor(
     private readonly config: AppConfig,
@@ -130,21 +132,43 @@ export class PythPriceFeed implements QuotePriceFeed {
     this.scheduleNext(this.config.price.refreshSeconds * 1000);
   }
 
+  /** The price account as the RPC returns it (`result.value`). */
+  private async fetchAccount(url: string): Promise<unknown> {
+    const res = await this.fetchImpl(url, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getAccountInfo", params: [PYTH_SOL_USD_ACCOUNT, { encoding: "base64", commitment: "confirmed" }] }),
+      signal: AbortSignal.timeout(RPC_TIMEOUT_MS),
+    });
+    if (res.status !== 200) throw new PythPriceError(`RPC HTTP ${res.status}`);
+    const body = JSON.parse(await res.text()) as { result?: { value?: unknown }; error?: { message?: string } };
+    if (body.error) throw new PythPriceError(`RPC error: ${body.error.message ?? "unknown"}`);
+    return body.result?.value ?? null;
+  }
+
+  /** Reads through the primary RPC, then through the fallback when the primary fails. */
+  private async fetchAccountWithFallback(): Promise<unknown> {
+    const fallback = this.config.rpc.httpFallbackUrl;
+    try {
+      const value = await this.fetchAccount(this.config.rpc.httpUrl!);
+      if (this.usingFallback) log("info", "price-pyth", "Pyth reads are back on the primary RPC", {});
+      this.usingFallback = false;
+      return value;
+    } catch (err) {
+      if (!fallback || fallback === this.config.rpc.httpUrl) throw err;
+      const value = await this.fetchAccount(fallback);
+      if (!this.usingFallback) log("warn", "price-pyth", "Primary RPC failed; Pyth reads use the fallback RPC", { error: err instanceof Error ? err.message : String(err) });
+      this.usingFallback = true;
+      return value;
+    }
+  }
+
   /** One RPC read. Returns true when a new price was stored. */
   async pollQuote(q: QuoteAsset): Promise<boolean> {
     this.polls++;
     const startedAt = this.clock.now();
     try {
-      const res = await this.fetchImpl(this.config.rpc.httpUrl!, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getAccountInfo", params: [PYTH_SOL_USD_ACCOUNT, { encoding: "base64", commitment: "confirmed" }] }),
-        signal: AbortSignal.timeout(RPC_TIMEOUT_MS),
-      });
-      if (res.status !== 200) throw new PythPriceError(`RPC HTTP ${res.status}`);
-      const body = JSON.parse(await res.text()) as { result?: { value?: unknown }; error?: { message?: string } };
-      if (body.error) throw new PythPriceError(`RPC error: ${body.error.message ?? "unknown"}`);
-      const p = readSolUsdAccount(body.result?.value ?? null);
+      const p = readSolUsdAccount(await this.fetchAccountWithFallback());
       const receivedAt = this.clock.now();
       let stored = false;
       if (p.publishTimeMs > this.lastPublishMs) {

@@ -297,9 +297,34 @@ export function afterDetail(db: Db, pack: PackBasics, members: { walletAddress: 
 /** Earlier packs are looked up within 7 days (member entries bounded by the same window, index-served). */
 export const EARLIER_LOOKBACK_MS = 7 * 24 * 60 * 60_000;
 
-/** Earlier packs sharing at least two of these wallets, with how their token moved in the next 15 minutes. */
-export function earlierPacks(db: Db, pack: PackBasics, wallets: string[]): EarlierPack[] {
+/** Data whose newest trade is at most this old is still being collected. */
+const DATA_CURRENT_MS = 5 * 60_000;
+
+/**
+ * Earlier packs sharing at least two of these wallets, with how their token moved in the next 15 minutes.
+ * The 15-minute values exist only once those 15 minutes have passed: before that a row is `observing`
+ * and carries "so far" values. The price at the cutoff is the last observed trade at or before 15:00
+ * after the pack formed (its time is returned), so a completed value never follows later prices.
+ */
+export function earlierPacks(db: Db, pack: PackBasics, wallets: string[], nowMs: number): EarlierPack[] {
   if (wallets.length < 2) return [];
+  const newest = (db.prepare("SELECT MAX(event_time_ms) AS t FROM trade_events WHERE namespace = ?").get(pack.namespace) as { t: number | null }).t;
+  const current = newest === null || nowMs - newest <= DATA_CURRENT_MS;
+  // Live data is observed up to now; recorded or archived data ends at its newest trade.
+  const observedUntil = current ? nowMs : Math.min(nowMs, newest);
+  const gapStmt = db.prepare("SELECT 1 FROM collector_gaps WHERE namespace = ? AND started_at_ms <= ? AND (ended_at_ms IS NULL OR ended_at_ms >= ?) LIMIT 1");
+  // Only the peak and the last trade of each window are needed: the peak comes from SQL (as on radar cards),
+  // so busy tokens with thousands of trades in 15 minutes are not parsed trade by trade.
+  const WINDOW = "namespace = ? AND chain = 'solana' AND mint = ? AND event_time_ms >= ? AND event_time_ms <= ? AND valuation_status <> 'unsupported_quote'";
+  const windowPeak = db.prepare(
+    `SELECT MAX(CAST(json_extract(payload_json, '$.quoteAmountRaw') AS REAL) / CAST(json_extract(payload_json, '$.tokenAmountRaw') AS REAL)) AS maxp
+       FROM trade_events WHERE ${WINDOW} AND CAST(json_extract(payload_json, '$.tokenAmountRaw') AS REAL) > 0`,
+  );
+  const windowLast = db.prepare(
+    `SELECT event_time_ms AS t, json_extract(payload_json, '$.tokenAmountRaw') AS tok, json_extract(payload_json, '$.quoteAmountRaw') AS q
+       FROM trade_events WHERE ${WINDOW} AND json_extract(payload_json, '$.tokenAmountRaw') <> '0'
+      ORDER BY event_time_ms DESC, slot DESC, signature DESC, event_ordinal DESC LIMIT 1`,
+  );
   const placeholders = wallets.map(() => "?").join(",");
   // CROSS JOIN: start from the members' (wallet, entry time) index, never from every pack in the window.
   const rows = db
@@ -316,19 +341,28 @@ export function earlierPacks(db: Db, pack: PackBasics, wallets: string[]): Earli
   }[];
   return rows.map((r) => {
     const entry = entryPrice(db, r.id);
-    const trades = (db.prepare(TRADE_SQL).all(pack.namespace, r.mint, r.trigger_event_time_ms + 1) as TradeRow[])
-      .filter((t) => t.t <= r.trigger_event_time_ms + EARLIER_OUTCOME_MS)
-      .map(toTrade)
-      .filter((t): t is Trade => t !== null);
+    const endMs = r.trigger_event_time_ms + EARLIER_OUTCOME_MS;
+    const untilMs = Math.min(endMs, observedUntil);
+    const range = [pack.namespace, r.mint, r.trigger_event_time_ms + 1, untilMs] as const;
+    const last = windowLast.get(...range) as { t: number; tok: string | null; q: string | null } | undefined;
+    const maxp = last ? (windowPeak.get(...range) as { maxp: number | null }).maxp : null;
     let peakPct: number | null = null;
     let lastPct: number | null = null;
-    if (entry && trades.length > 0) {
-      for (const t of trades) {
-        const c = pct(t.priceRaw, entry);
-        if (peakPct === null || c > peakPct) peakPct = c;
-      }
-      lastPct = pct(trades[trades.length - 1]!.priceRaw, entry);
+    if (entry && last?.tok && last.q) {
+      lastPct = pct(parseDecimal(last.q).div(parseDecimal(last.tok)), entry);
+      peakPct = maxp === null ? lastPct : Number(((maxp / entry.toNumber() - 1) * 100).toFixed(4));
     }
+    const completedAt = tokenLifecycle(db, pack.namespace, r.mint)?.completed_at_ms ?? null;
+    const graduated = completedAt !== null && completedAt > r.trigger_event_time_ms && completedAt <= untilMs;
+    const gap = gapStmt.get(pack.namespace, untilMs, r.trigger_event_time_ms) !== undefined;
+    let outcomeState: "complete" | "observing" | "partial";
+    let outcomeNote: "gap" | "graduated" | "data_ended" | null = gap ? "gap" : graduated ? "graduated" : null;
+    if (observedUntil < endMs && current) outcomeState = "observing";
+    else if (observedUntil < endMs) {
+      outcomeState = "partial";
+      outcomeNote ??= "data_ended";
+    } else outcomeState = outcomeNote === null ? "complete" : "partial";
+    const observing = outcomeState === "observing";
     const tok = db.prepare("SELECT name, symbol FROM tokens WHERE namespace = ? AND mint = ?").get(pack.namespace, r.mint) as { name: string | null; symbol: string | null } | undefined;
     return {
       packId: r.id,
@@ -339,8 +373,14 @@ export function earlierPacks(db: Db, pack: PackBasics, wallets: string[]): Earli
       sharedWallets: r.shared,
       totalWalletCount: r.total_wallet_count,
       eligibleBuyUsd: r.eligible_buy_usd,
-      peakChangePct15m: peakPct,
-      changePct15m: lastPct,
+      outcomeState,
+      outcomeNote,
+      observedMs: Math.max(0, untilMs - r.trigger_event_time_ms),
+      priceAtMs: last?.t ?? null,
+      peakChangePct15m: observing ? null : peakPct,
+      changePct15m: observing ? null : lastPct,
+      peakSoFarPct: observing ? peakPct : null,
+      changeSoFarPct: observing ? lastPct : null,
     };
   });
 }

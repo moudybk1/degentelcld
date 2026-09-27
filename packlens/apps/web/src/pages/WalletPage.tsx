@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { Link, useLocation, useParams } from "react-router";
 import type { WalletPackRow, WalletPageData } from "@packlens/contracts";
 import { track } from "../api/client";
-import { useApi, useNow } from "../api/hooks";
+import { useApi, useDocumentTitle, useNow } from "../api/hooks";
 import { WalletProfileCard } from "../components/ContextPanels";
 import { Address, Empty, ErrorNote, ExtLink, LoadingBlock, ModeBadge, Tag, TokenAvatar, type FromState } from "../components/ui";
 import { relative, shortAddr, timeUtc, usd, usdCompact } from "../lib/format";
@@ -28,12 +28,17 @@ function summary(d: WalletPageData, now: number): { q: string; a: string; detail
   const times = rows.map((r) => r.triggerEventTimeMs).sort((a, b) => a - b);
   const spanMs = n > 1 ? times[n - 1]! - times[0]! : 0;
   const every = n > 1 ? spanMs / (n - 1) : null;
+  // The page loads the latest packs only: lifetime totals and sample statistics are named separately.
+  const sampled = d.packCount > n;
+  const of = sampled ? `of the latest ${n}` : `of ${n}`;
   out.push({
     q: "How active is it?",
-    a: `${d.packCount} ${d.packCount === 1 ? "pack" : "packs"}`,
+    a: `${d.packCount.toLocaleString("en-US")} ${d.packCount === 1 ? "pack" : "packs"}${sampled ? " in total" : ""}`,
     detail:
       n > 1
-        ? `Between ${timeUtc(times[0]!)} and ${timeUtc(times[n - 1]!)}, about one every ${duration(every!)}.${d.packCount > n ? ` The latest ${n} are shown.` : ""}`
+        ? sampled
+          ? `The latest ${n} span ${duration(spanMs)} (${timeUtc(times[0]!)} to ${timeUtc(times[n - 1]!)}), about one every ${duration(every!)}. The answers below describe those ${n}.`
+          : `Between ${timeUtc(times[0]!)} and ${timeUtc(times[n - 1]!)}, about one every ${duration(every!)}.`
         : n === 1
           ? `Once, ${relative(times[0]!, now)}.`
           : "No packs recorded.",
@@ -42,7 +47,7 @@ function summary(d: WalletPageData, now: number): { q: string; a: string; detail
   const started = rows.filter((r) => r.memberKind === "initial").length;
   out.push({
     q: "Does it start packs or join them?",
-    a: `Started ${started} of ${n}`,
+    a: `Started ${started} ${of}`,
     detail: `It was among the first wallets in ${started} ${started === 1 ? "pack" : "packs"} and joined ${n - started} later.`,
     tone: n > 0 && started / n >= 0.5 ? "attention" : "neutral",
   });
@@ -52,7 +57,7 @@ function summary(d: WalletPageData, now: number): { q: string; a: string; detail
   const hold = median(sold.map((r) => r.firstSellTimeMs! - r.firstEntryTimeMs));
   out.push({
     q: "Does it sell quickly?",
-    a: known.length === 0 ? "Not known" : `Sold in ${sold.length} of ${known.length}`,
+    a: known.length === 0 ? "Not known" : `Sold in ${sold.length} of ${known.length}${sampled ? " recent" : ""}`,
     detail:
       known.length === 0
         ? "Its trades are older than the one day of trades kept."
@@ -65,7 +70,7 @@ function summary(d: WalletPageData, now: number): { q: string; a: string; detail
   const atLaunch = withLaunch.filter((r) => r.firstEntryTimeMs - r.tokenCreatedAtMs! <= LAUNCH_MS);
   out.push({
     q: "Does it buy at launch?",
-    a: withLaunch.length === 0 ? "Not known" : `${atLaunch.length} of ${withLaunch.length} at launch`,
+    a: withLaunch.length === 0 ? "Not known" : `${atLaunch.length} of ${withLaunch.length}${sampled ? " recent" : ""} at launch`,
     detail: withLaunch.length === 0 ? "The tokens' creation was not observed." : "First buy within 10 seconds of the token's creation.",
     tone: withLaunch.length > 0 && atLaunch.length / withLaunch.length >= 0.5 ? "attention" : "neutral",
   });
@@ -73,8 +78,8 @@ function summary(d: WalletPageData, now: number): { q: string; a: string; detail
   const total = spend.reduce((a, b) => a + b, 0);
   out.push({
     q: "How much does it spend?",
-    a: usdCompact(String(total)),
-    detail: `Across ${n} ${n === 1 ? "pack" : "packs"}; ${usd(String(median(spend) ?? 0))} per pack (median).`,
+    a: `${usdCompact(String(total))}${sampled ? ` in the latest ${n}` : ""}`,
+    detail: `Across ${sampled ? `the latest ${n}` : n} ${n === 1 ? "pack" : "packs"}; ${usd(String(median(spend) ?? 0))} per pack (median).`,
     tone: "neutral",
   });
   return out;
@@ -92,6 +97,7 @@ export function WalletPage() {
   const now = useNow(10_000);
   const from = (useLocation().state as FromState | null)?.from;
   const { data: raw, meta, error, loading } = useApi<WalletPageData>(`/api/wallets/solana/${address}`);
+  useDocumentTitle(`Wallet ${shortAddr(address)} · Degentellegence`);
   // A server older than this page sends rows without sells, launch times, or token identity: show the plain table only.
   const legacy = raw !== null && raw.packCount === undefined;
   const data: WalletPageData | null = raw
