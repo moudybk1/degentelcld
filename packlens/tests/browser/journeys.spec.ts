@@ -161,6 +161,9 @@ test("360 px: core flow works without horizontal page scroll", async ({ browser 
 });
 
 test("operator: login required, session cookie, overview, logout", async ({ page }) => {
+  // The console is for the site owner: reachable by its address, not linked for visitors.
+  await page.goto("/");
+  await expect(page.getByRole("contentinfo").getByRole("link", { name: "Operator" })).toHaveCount(0);
   await page.goto("/operator");
   await expect(page.getByRole("heading", { name: "Operator login" })).toBeVisible();
   await page.getByLabel("Operator token").fill("wrong-token");

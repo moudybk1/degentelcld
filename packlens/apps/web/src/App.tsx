@@ -103,7 +103,6 @@ function Shell() {
               </div>
               <div className="footer-links">
                 <NavLink to={href("/guide")}>Guide</NavLink>
-                <NavLink to={href("/operator")}>Operator</NavLink>
               </div>
             </div>
             <div className="footer-rev" aria-hidden="true">

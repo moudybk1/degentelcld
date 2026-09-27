@@ -42,7 +42,7 @@ Degentellegence finds events worth reviewing and shows what happened after them,
 | **Token** (`/tokens/solana/:mint`) | Links to pump.fun, DexScreener, Solscan, and the token's Nansen page (*Trade on Nansen*); creation and bonding-curve completion times; packs on the token (or *No pack detected in the monitored source*); Smart Money windows, netflow, token facts, and holders, collapsed to one line while Nansen has not checked them. |
 | **Smart Money Activity** (`/smart-money`) | The shared Nansen Smart Money DEX feed with direction, scope, and whether a pack exists. Rows never create packs. |
 | **Search** (top bar) | Tokens that have packs by name, symbol, or mint (`GET /api/search`), and wallets by exact address. |
-| **Operator** (`/operator`, linked from the footer) | Login, Nansen session, credit budget and ledger, usage by endpoint, collector health, job queue, replay, demo pins, and local analytics. |
+| **Operator** (`/operator`, not linked for visitors; open the address directly) | Login, Nansen session, credit budget and ledger, usage by endpoint, collector health, job queue, replay, demo pins, and local analytics. |
 
 Every screen shows the data **mode** (Live, Fixture, or Replay), and every Nansen panel states its source, period, fetch time, and state: *not analyzed yet*, *queued*, *observed empty*, *partial*, *stale*, *update delayed*, *unavailable from this source*, or *analysis paused*. Unknown is never shown as zero.
 
