@@ -13,8 +13,9 @@ test("radar shows mode, source, and separate Smart Money metrics", async ({ page
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
   await page.goto("/");
-  await expect(page.getByText("Example", { exact: true }).first()).toBeVisible();
-  await expect(page.getByText("Example data", { exact: true })).toBeVisible();
+  // One source badge in the top bar.
+  await expect(page.getByRole("banner").getByRole("status")).toHaveText("Example data");
+  await expect(page.getByText(/Detecting · last event/)).toHaveCount(0);
   const row = page.getByRole("row", { name: /Lantern Moth/ });
   await expect(row).toContainText("12 observed buyers");
   await expect(row).toContainText("2 of 6 confirmed");

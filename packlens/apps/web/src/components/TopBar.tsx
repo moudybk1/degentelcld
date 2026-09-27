@@ -5,35 +5,44 @@ import { useNow } from "../api/hooks";
 import { relative } from "../lib/format";
 import { useNsHref } from "../state/namespace";
 import { Search } from "./Search";
-import { ModeBadge } from "./ui";
+import { Tag } from "./ui";
 import symbolUrl from "../assets/brand/symbol-red-160.png";
 import { BASELINE_RULE, ruleUsd } from "../lib/rule";
 
+type FeedBadge = { text: string; tone: "green" | "yellow" | "red" | "blue" | "gray"; live: boolean; title: string };
+
 /**
- * Whether new packs can be detected right now, in words. A connected stream
- * is not enough: without a fresh quote price no buy can pass the USD check,
- * so the status says detection is paused instead of showing a green light.
+ * The one source indicator in the top bar: "Live feed" while new packs can be
+ * detected. A connected stream is not enough: without a fresh quote price no
+ * buy can pass the USD check, so the badge then says detection is paused
+ * instead of showing a green light. The time of the last event is in the tooltip.
  */
-function healthView(status: SourceStatus | null, pulseHealth: string | undefined, lastMessageAt: string | null, priceState: string | undefined, now: number): { dot: string; text: string; title: string } {
+function feedBadge(status: SourceStatus | null, pulseHealth: string | undefined, lastMessageAt: string | null, priceState: string | undefined, now: number): FeedBadge {
   const health = pulseHealth ?? status?.collector.health;
-  if (!status) return { dot: "", text: "Checking source…", title: "" };
-  if (health === "fixture") return { dot: "ok", text: "Example data", title: "Synthetic fixture data for offline use; not market observations." };
-  if (health === "replay") return { dot: "ok", text: "Replaying recorded data", title: "A recorded dataset replayed with its original times." };
-  if (health === "not_configured") return { dot: "bad", text: "Source not configured", title: "No pump.fun stream is configured, so no packs can be detected." };
-  if (health === "connecting") return { dot: "warn", text: "Connecting to source…", title: "" };
-  if (health === "disconnected") return { dot: "bad", text: "Source disconnected", title: "The pump.fun stream is disconnected; new packs cannot be detected until it reconnects." };
+  if (!status) return { text: "Checking…", tone: "gray", live: false, title: "Checking the data source." };
+  if (health === "fixture") return { text: "Example data", tone: "blue", live: false, title: "Synthetic fixture data for offline use; not market observations." };
+  if (health === "replay") return { text: "Replay", tone: "yellow", live: false, title: "A recorded dataset replayed with its original times." };
+  if (health === "not_configured") return { text: "No source", tone: "red", live: false, title: "No pump.fun stream is configured, so no packs can be detected." };
+  if (health === "connecting") return { text: "Connecting…", tone: "yellow", live: false, title: "Connecting to the pump.fun stream." };
+  if (health === "disconnected") return { text: "Feed disconnected", tone: "red", live: false, title: "The pump.fun stream is disconnected; new packs cannot be detected until it reconnects." };
   if (priceState === "stale" || priceState === "waiting_for_price") {
     const check = `${ruleUsd(status.detector ?? BASELINE_RULE)} check`;
     return {
-      dot: "warn",
       text: "Detection paused",
+      tone: "yellow",
+      live: false,
       title: status.analysisPaused.paused
         ? `${status.analysisPaused.reason} Without a fresh SOL price, new buys cannot pass the ${check}, so no new packs form.`
         : `Without a fresh SOL price, new buys cannot pass the ${check}, so no new packs form.`,
     };
   }
   const age = lastMessageAt ? relative(lastMessageAt, now) : "no events yet";
-  return { dot: "ok", text: `Detecting · last event ${age}`, title: "Connected to the pump.fun stream with a valid quote price." };
+  return {
+    text: "Live feed",
+    tone: "green",
+    live: true,
+    title: `Detecting packs · last event ${age}. The pump.fun trade feed is live; Nansen panels and prices show their own check times.`,
+  };
 }
 
 const pad = (n: number) => String(n).padStart(2, "0");
@@ -64,7 +73,7 @@ export function TopBar({ status }: { status: SourceStatus | null }) {
   const { pulse } = useEvents();
   const now = useNow(3000);
   const priceState = pulse?.price ?? status?.price.state;
-  const health = healthView(status, pulse?.health, pulse?.lastMessageAt ?? status?.collector.lastMessageAt ?? null, priceState, now);
+  const feed = feedBadge(status, pulse?.health, pulse?.lastMessageAt ?? status?.collector.lastMessageAt ?? null, priceState, now);
   return (
     <header className="topbar">
       <div className="container topbar-inner">
@@ -87,11 +96,11 @@ export function TopBar({ status }: { status: SourceStatus | null }) {
         </nav>
         <Search />
         <div className="topbar-right">
-          <span className="status" role="status" aria-live="polite" title={health.title}>
-            <span className={`dot ${health.dot}`} aria-hidden="true" />
-            <span className="status-text">{health.text}</span>
+          <span className="feed-status" role="status" aria-live="polite">
+            <Tag tone={feed.tone} className={feed.live ? "live" : undefined} dot pulse={feed.live} title={feed.title}>
+              {feed.text}
+            </Tag>
           </span>
-          <ModeBadge mode={status?.mode} />
           <UtcClock />
         </div>
       </div>
